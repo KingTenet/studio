@@ -8,6 +8,9 @@ const { mkdtempSync, rmSync, writeFileSync } = fs;
 const os = require('node:os');
 const path = require('node:path');
 
+// The server keeps its logs under STUDIO_HOME, read once at load: point it at a throwaway folder before loading it.
+process.env.STUDIO_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-server-test-'));
+
 const { appAgents, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, freeTextKeys, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats } = require('./studio-server');
 
 test('isLocalHost: localhost and 127.0.0.1 only, so a rebound DNS name is refused', () => {
