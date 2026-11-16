@@ -540,6 +540,66 @@ test('Go back to here: develop and data/ back to the checkpoint; Bring them back
   }
 });
 
+test('A change holding a value from .env is never committed: Claude is told to move it (once per turn), Keep refuses it, short values are ignored', async () => {
+  const t = keepSetup();
+  try {
+    const write = (file, text) => fs.writeFileSync(path.join(t.app, file), text);
+    const KEY = 'sk-live-0123456789abcdef';
+    const QUOTED = 'a quoted secret';
+    t.run(['start', 'ai helper']);
+    const head = git(t.app, 'rev-parse', 'HEAD');
+    const stop = (active) => t.hook('stop', { last_assistant_message: 'Checkpoint: Added the AI helper', stop_hook_active: active });
+    // .env not yet ignored by git: committing it would publish every value in it.
+    write('.env', `# keys\nOPENAI_KEY=${KEY}\nexport QUOTED="${QUOTED}"\nSHORT=abc1234\n`);
+    t.hook('prompt-submit', { prompt: 'Add an AI helper' });
+    write('page.html', '<h1>AI</h1>\n');
+    let stopped = stop(false);
+    assert.equal(stopped.status, 0);
+    const blocked = JSON.parse(stopped.stdout);
+    assert.equal(blocked.decision, 'block');
+    assert.match(blocked.reason, /^Nothing was saved as a checkpoint, because the changes contain values from \.env: \.env has the value of OPENAI_KEY; \.env has the value of QUOTED\. \.env itself must never be committed/);
+    assert.equal(git(t.app, 'rev-parse', 'HEAD'), head, 'nothing committed');
+    assert.equal(git(t.app, 'diff', '--cached', '--name-only'), '', 'nothing left staged');
+
+    // Claude ignores .env but puts the key in the code. A second refusal in the same turn doesn't keep it going again.
+    write('.gitignore', 'data/\n.env\n');
+    write('ai.js', `const key = '${KEY}'\nconst pin = 'abc1234'\n`);
+    stopped = stop(true);
+    assert.equal(stopped.stdout, '');
+    assert.match(stopped.stderr, /ai\.js has the value of OPENAI_KEY\. Secrets belong in \.env only\. Take the value out of the code and read it with process\.env\.OPENAI_KEY instead/);
+    assert.equal(git(t.app, 'rev-parse', 'HEAD'), head);
+    for (const output of [blocked.reason, stopped.stdout, stopped.stderr]) assert.ok(!output.includes(KEY) && !output.includes(QUOTED), 'no value in what is said');
+
+    // Moved to process.env: the checkpoint is made, with the prompt of the turn; a value shorter than 8 characters doesn't count.
+    write('ai.js', `const key = process.env.OPENAI_KEY\nconst pin = 'abc1234'\n`);
+    stopped = stop(true);
+    assert.equal(stopped.stdout, '', stopped.stderr);
+    const [made] = read(t.app).feature.checkpoints;
+    assert.equal(made.label, 'Added the AI helper');
+    assert.equal(made.prompt, 'Add an AI helper');
+    assert.equal(git(t.app, 'rev-parse', 'HEAD'), made.sha);
+
+    // Keep checks everything it would put on main, uncommitted files too, and says which (never the value).
+    write('leak.js', `export const q = "${QUOTED}"\n`);
+    assert.equal((await runGate(t.app)).ok, true);
+    assert.throws(
+      () => keep(t.app, { summary: 'An AI helper.' }),
+      (error) => /"ai helper" can't be kept, because it contains secrets from \.env \(leak\.js has the value of QUOTED\)\. Ask Claude to move them into \.env\./.test(error.message) && !error.message.includes(QUOTED)
+    );
+    assert.equal(versions(t.app).length, 1);
+    fs.rmSync(path.join(t.app, 'leak.js'));
+    assert.equal((await runGate(t.app)).ok, true);
+    assert.equal(keep(t.app, { summary: 'An AI helper.' }).version, 'v2');
+
+    // No value is written anywhere in the studio's state, the pushes' errors included.
+    await until(() => spawnSync('pgrep', ['-f', `push ${t.app}`]).status !== 0);
+    const found = spawnSync('grep', ['-rlF', '-e', KEY, '-e', QUOTED, t.home], { encoding: 'utf8' });
+    assert.equal(found.status, 1, `found in ${found.stdout}`);
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test('summarise falls back to the checkpoint labels when the summariser fails, prints nothing or is too slow', async () => {
   const t = keepSetup();
   try {

@@ -32,7 +32,8 @@
  *
  * Usage: node lib/feature.js prompt-submit         UserPromptSubmit hook: notes the prompt; starts a feature if none is open;
  *                                                  lets go of what going back left, telling Claude
- *        node lib/feature.js stop                  Stop hook: commits a checkpoint if the turn changed files
+ *        node lib/feature.js stop                  Stop hook: commits a checkpoint if the turn changed files; when the changes
+ *                                                  hold a value from the app's .env, commits nothing and tells Claude to move it
  *        node lib/feature.js start <name> [app]    start a feature (the cockpit's server does this, and runs /clear)
  *        node lib/feature.js push [app] [branch…]  push develop, those branches and every branch whose push failed
  *        node lib/feature.js show [app]            the open feature and pending pushes, as JSON
@@ -171,9 +172,62 @@ const start = (appDir, name, now = new Date()) => {
 /** Notes the prompt of the turn under way, for the checkpoint it may become. */
 const notePrompt = (appDir, prompt, now = new Date()) => writeJson(files(appDir).turn, { prompt: String(prompt ?? ''), at: now.toISOString() });
 
+// Values in .env shorter than this aren't looked for: they would turn up in ordinary code by chance.
+const MIN_SECRET = 8;
+
+/** The values in the app's .env worth looking for, with their names: [{ name, value }]. */
+const envSecrets = (appDir) => {
+  let text;
+  try {
+    text = fs.readFileSync(path.join(appDir, '.env'), 'utf8');
+  } catch {
+    return [];
+  }
+  return text
+    .split(/\r?\n/)
+    .map((line) => /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line))
+    .filter(Boolean)
+    .map(([, name, raw]) => ({ name, value: /^(["'`]).*\1$/.test(raw) ? raw.slice(1, -1) : raw.replace(/\s+#.*$/, '') }))
+    .filter(({ value }) => value.length >= MIN_SECRET);
+};
+
+/**
+ * Where a diff (`git diff <args>`) adds a value from the app's .env: [{ file, name }], the file and the value's name in .env,
+ * never the value itself, so it can't end up in a message or a log.
+ */
+const envLeaks = (appDir, args) => {
+  const secrets = envSecrets(appDir);
+  if (!secrets.length) return [];
+  const diff = execFileSync('git', ['-C', appDir, 'diff', '--text', '--no-color', '--no-ext-diff', '-U0', ...args], { encoding: 'utf8', maxBuffer: 512 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+  const found = new Map();
+  let file = '';
+  for (const line of diff.split('\n')) {
+    if (line.startsWith('+++ ')) file = line.slice(4).replace(/^"?b\//, '').replace(/"$/, '');
+    else if (line.startsWith('+')) for (const { name } of secrets.filter(({ value }) => line.includes(value))) found.set(`${file}\0${name}`, { file, name });
+  }
+  return [...found.values()];
+};
+
+/** Which files hold which .env values, in words: `server/ai.ts has the value of OPENAI_KEY`. */
+const describeLeaks = (leaks) => leaks.map(({ file, name }) => `${file} has the value of ${name}`).join('; ');
+
+/** What Claude is told when a checkpoint is refused for holding values from .env (names only, never the values). */
+const leakMessage = (leaks) => {
+  const names = [...new Set(leaks.map(({ name }) => name))];
+  const envItself = leaks.some(({ file }) => file === '.env');
+  return [
+    `Nothing was saved as a checkpoint, because the changes contain values from .env: ${describeLeaks(leaks)}.`,
+    envItself ? '.env itself must never be committed: make sure .gitignore lists it.' : '',
+    `Secrets belong in .env only. Take the value out of the code and read it with ${names.map((name) => `process.env.${name}`).join(', ')} instead (with the name, not the value, in .env.example). The checkpoint is saved when you finish.`,
+  ]
+    .filter(Boolean)
+    .join(' ');
+};
+
 /**
  * Commits what the turn changed as a checkpoint on develop, snapshots data/ for it and adds it to the feature.
- * Null, and nothing committed, when no feature is open, develop isn't checked out or no file changed.
+ * Null, and nothing committed, when no feature is open, develop isn't checked out or no file changed. When the changes add a
+ * value from the app's .env, nothing is committed either, and it returns { refused }: what Claude is told to do about it.
  */
 const checkpoint = (appDir, { label, prompt = '' }, now = new Date()) =>
   withLock(appDir, () => {
@@ -182,6 +236,11 @@ const checkpoint = (appDir, { label, prompt = '' }, now = new Date()) =>
     if (git(appDir, 'symbolic-ref', '--short', '-q', 'HEAD') !== 'develop') return null;
     if (!git(appDir, 'status', '--porcelain')) return null;
     git(appDir, 'add', '-A');
+    const leaks = envLeaks(appDir, ['--cached']);
+    if (leaks.length) {
+      git(appDir, 'reset', '-q');
+      return { refused: leakMessage(leaks) };
+    }
     git(appDir, 'commit', '-q', '-m', label);
     const sha = git(appDir, 'rev-parse', 'HEAD');
     snapshotData(appDir, sha);
@@ -425,6 +484,8 @@ const keep = (appDir, { summary, anyway = false } = {}) =>
     const tree = workTree(appDir);
     const latest = versions(appDir).at(-1)?.tag ?? 'the last version';
     if (tree === git(appDir, 'rev-parse', `${main}^{tree}`)) throw new Error(`Nothing has changed since ${latest}, so there is nothing to keep. Discard "${feature.name}" instead.`);
+    const leaks = envLeaks(appDir, [main, tree]);
+    if (leaks.length) throw new Error(`"${feature.name}" can't be kept, because it contains secrets from .env (${describeLeaks(leaks)}). Ask Claude to move them into .env.`);
     if (!anyway) {
       const gate = readJson(files(appDir).gate, null);
       if (!gate || gate.tree !== tree) throw new Error('The app has changed since the tests last ran. Run them again first.');
@@ -632,11 +693,16 @@ const onPromptSubmit = (event, appDir = appFor(event)) => {
   return `[studio] No feature was open, so a new one was started for this work, called "${feature.name}".`;
 };
 
-/** Stop: a Build turn that changed files becomes a checkpoint, which is then pushed. Returns the checkpoint, or null. */
+/**
+ * Stop: a Build turn that changed files becomes a checkpoint, which is then pushed. Returns the checkpoint, or null; or, when
+ * the changes hold values from .env, { refused, block }: block (keep Claude going, to fix it) is false when Claude is already
+ * going on because of a Stop hook, so a value it can't move never loops. The turn's prompt is kept for the checkpoint to come.
+ */
 const onStop = (event, appDir = appFor(event)) => {
   if (!appDir || event.agent_id || turnMode(appDir) !== 'build') return null;
   const reply = event.last_assistant_message || lastReply(event.transcript_path);
   const made = checkpoint(appDir, { label: turnLabel(reply), prompt: readJson(files(appDir).turn, {}).prompt ?? '' });
+  if (made?.refused) return { ...made, block: !event.stop_hook_active };
   if (made) {
     fs.rmSync(files(appDir).turn, { force: true });
     pushInBackground(appDir);
@@ -659,8 +725,12 @@ if (require.main === module) {
     // A hook must never fail the turn: what goes wrong is logged to stderr, which Claude Code shows in its transcript view only.
     try {
       const event = readStdin();
-      if (command === 'stop') onStop(event);
-      else process.stdout.write(onPromptSubmit(event));
+      if (command === 'stop') {
+        const stopped = onStop(event);
+        // {"decision":"block"} keeps Claude going, with the reason as what it is told.
+        if (stopped?.block) process.stdout.write(JSON.stringify({ decision: 'block', reason: stopped.refused }) + '\n');
+        else if (stopped?.refused) process.stderr.write(`studio: ${stopped.refused}\n`);
+      } else process.stdout.write(onPromptSubmit(event));
     } catch (error) {
       process.stderr.write(`studio: ${error.message}\n`);
     }
