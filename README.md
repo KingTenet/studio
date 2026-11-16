@@ -13,8 +13,17 @@ The app lives in its own repo, next to this one (`~/Studio/<app>`). Studio keeps
 - `config.json`: the app's folder and name, and the cockpit's settings.
 - Logs, drawings, uploads and the artifact registry.
 
+## Start it
+
+```sh
+studio up
+```
+
+This updates Studio, starts its herdr workspace (Claude, the cockpit's server and the app's dev server, one tab each) and opens the cockpit. Running it again reuses the workspace that's already running. `studio up --dry-run` prints what each tab would run.
+
 ## Layout
 
+- `bin/studio`: the `studio up` command.
 - `scripts/lib/studio-server.js`: the local server behind the page. It serves the cockpit and the API for chat, artifacts, drawing, uploads, dictation and jobs.
 - `scripts/`: the jobs the cockpit's buttons run (start or resume Claude, rebuild the artifact index, write the summary) and `cc-command.sh` (slash commands queued for the pane).
 - `web/`: the cockpit page (React, built into a single `web/dist/cockpit.html`).
@@ -31,4 +40,4 @@ node --test scripts/lib/*.test.js                # server and script tests
 cd web && pnpm test && pnpm lint                 # page tests
 ```
 
-Set `STUDIO_DIR` to this folder in the environment Claude runs in, because the hooks and skills find their scripts through it.
+`studio up` sets `STUDIO_DIR` to this folder in the environment Claude runs in, because the hooks and skills find their scripts through it. To try it without touching a real app or session: `STUDIO_HOME=<a temp folder with a config.json> STUDIO_PORT=<free port> STUDIO_WORKSPACE=studio-test STUDIO_CLAUDE_CMD='sleep 86400' STUDIO_NO_OPEN=1 bin/studio up`.

@@ -54,6 +54,11 @@ describe('latestSessionPane', () => {
     expect(latestSessionPane(app({ paused: [paused('w1:p3', null, '2026-01-01T12:00:00Z')] }))).toBe('w1:p3')
     expect(latestSessionPane(app())).toBeNull()
   })
+
+  it('leaves out the session in the Artifacts tab, which the chat never shows', () => {
+    const w = app({ tabs: { artifacts: { tabId: 'w1:t2', state: 'claude-working' } }, agents: [agent({ paneId: 'w1:p1', active: '2026-01-01T10:00:00Z' }), agent({ paneId: 'w1:p2', tabId: 'w1:t2', active: '2026-01-01T11:00:00Z' })] })
+    expect(latestSessionPane(w)).toBe('w1:p1')
+  })
 })
 
 describe('tab session chips', () => {

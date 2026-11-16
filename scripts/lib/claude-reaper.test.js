@@ -2,8 +2,9 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
 
-const { commandText, notePaneSession, pausedSessions, processTree, runningCommands, reapAction, resumeCommand, trackIdle, typedInput, withRealSessions } = require('./claude-reaper');
+const { claudeCommand, commandText, notePaneSession, pausedSessions, processTree, runningCommands, reapAction, resumeCommand, trackIdle, typedInput, withRealSessions } = require('./claude-reaper');
 
 const MIN = 60_000;
 const THRESHOLD = 10 * MIN;
@@ -96,6 +97,16 @@ test('resumeCommand: keeps the permission mode, and changes directory only when 
 
   assert.equal(resumeCommand({ argv, sessionId: 'abc', cwd: '/code/repo', shellCwd: '/code/repo' }), 'claude --permission-mode auto --resume abc');
   assert.equal(resumeCommand({ argv: ['claude'], sessionId: 'abc', cwd: "/code/it's", shellCwd: '/tmp' }), "cd '/code/it'\\''s' && claude --resume abc");
+});
+
+test('resumeCommand: keeps the studio settings file, so the hooks and allowlist come back with the session', () => {
+  const argv = ['claude', '--permission-mode', 'auto', '--settings', '/Studio/studio/claude/settings.json'];
+
+  assert.equal(resumeCommand({ argv, sessionId: 'abc', cwd: '/r', shellCwd: '/r' }), "claude --permission-mode auto --settings '/Studio/studio/claude/settings.json' --resume abc");
+});
+
+test('claudeCommand: auto mode with the settings file in this harness', () => {
+  assert.equal(claudeCommand(), `claude --permission-mode auto --settings '${path.resolve(__dirname, '..', '..', 'claude', 'settings.json')}'`);
 });
 
 test('resumeCommand: a session with nothing saved starts afresh in the same mode', () => {

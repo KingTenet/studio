@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { useControls } from '@/components/controls/ControlsProvider'
-import { latestSessionPane } from '@/lib/controls'
+import { inChat, latestSessionPane } from '@/lib/controls'
 import { store } from '@/lib/store'
 import type { Agent, App } from '@/lib/types'
 
@@ -31,14 +31,14 @@ export const useChatSelection = (label: string, opened: string | null = null) =>
   return { selected, setSelected, focusMessage, open, adopt, provider }
 }
 
-/** Inside the provider: keeps the selection on a session that exists, moving to one a job of this page just brought up. */
+/** Inside the provider: keeps the selection on a chat session that exists, moving to one a job of this page just brought up. */
 export const useFollowSessions = (label: string, w: App | null, selected: string | null, setSelected: (paneId: string | null) => void, adopt: RefObject<boolean>) => {
   const { state, isBusy } = useControls()
   const known = useRef(new Set<string>())
   // Only on a fresh state: the render that clears the busy flag comes before the refresh that shows the new session.
   useEffect(() => {
     if (!w) return
-    const panes = w.agents.map((agent) => agent.paneId)
+    const panes = w.agents.filter((agent) => inChat(w, agent)).map((agent) => agent.paneId)
     let next = selected
     if (adopt.current) {
       next = panes.find((pane) => !known.current.has(pane)) ?? next
@@ -46,7 +46,7 @@ export const useFollowSessions = (label: string, w: App | null, selected: string
     }
     if (!isBusy(label, w)) known.current = new Set(panes)
     // The chat shown last stays selected, reaped or not; once it's gone, the most recently active session is.
-    const stopped = w.paused.map((session) => session.paneId)
+    const stopped = w.paused.filter((session) => inChat(w, session)).map((session) => session.paneId)
     if (!next || !(panes.includes(next) || stopped.includes(next))) next = latestSessionPane(w)
     if (next !== selected) setSelected(next)
   }, [state, selected])

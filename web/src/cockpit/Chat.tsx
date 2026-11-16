@@ -1,8 +1,7 @@
-import { Check, ChevronRight, ChevronsLeft, ChevronsRight, Clock, Crosshair, Keyboard, Layers, LoaderCircle, Paperclip, Pause, Plus, X } from 'lucide-react'
+import { Check, ChevronRight, ChevronsLeft, Clock, Crosshair, Keyboard, Layers, LoaderCircle, Paperclip, Pause, Play, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type ReactNode } from 'react'
 import { SmartLink } from '@/components/controls/ArtifactLink'
 import { useControls } from '@/components/controls/ControlsProvider'
-import { StartChip } from '@/components/controls/Chips'
 import { useTip } from '@/components/controls/Tip'
 import { useSharedPref } from '@/components/controls/useSharedPref'
 import { Button } from '@/components/ui/button'
@@ -12,8 +11,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { parseAnsi, type AnsiStyle } from '@/lib/ansi'
 import { FOCUS_CHAT_EVENT } from '@/lib/artifacts'
 import { focusAgent, pressEsc, sendToSession, uploadFile } from '@/lib/api'
-import { agentLook, LOOK_CLASS, SESSION_GROUPS, sessionControls, sessionGroup, sessionName, waitingOn, type ChipModel, type LookName, type StartModel } from '@/lib/controls'
-import { ago } from '@/lib/format'
+import { agentLook, sessionControls, sessionName, waitingOn, type ChipModel, type LookName, type StartModel } from '@/lib/controls'
 import { parseMarkdown, type Inline as InlinePart } from '@/lib/markdown'
 import { resolveQueue, type ChatMessage } from '@/lib/queue'
 import type { Agent, AgentStatus, App, SessionPrompt } from '@/lib/types'
@@ -338,186 +336,6 @@ const ChatStrip = ({ w, onExpand, overlay }: { w: App | null; onExpand: () => vo
   )
 }
 
-// The sessions under their group, most urgent group first; empty groups left out.
-const groupSessions = (chips: ChipModel[]) => SESSION_GROUPS.map((name) => ({ name, chips: chips.filter((chip) => sessionGroup(chip.look.name) === name) })).filter((group) => group.chips.length)
-
-// A card's status pill reads like its chip, with a word for the status in place of the name.
-const STATUS_WORD: Record<LookName, string> = {
-  blocked: 'needs you',
-  working: 'working',
-  done: 'done',
-  idle: 'waiting',
-  unknown: 'waiting',
-  running: 'running',
-  finished: 'finished',
-  paused: 'paused',
-  on: 'on',
-  exited: 'exited',
-  command: 'running',
-}
-
-/** A session in the list: its title, what started it (unless a plain claude tab), its status and when it last did anything. */
-const SessionCard = ({ label, model, selected, onShow }: { label: string; model: ChipModel; selected: boolean; onShow: (model: ChipModel) => void }) => {
-  const { perform, pendingOf, failedOf } = useControls()
-  const tip = useTip()
-  const pending = pendingOf(label, model.key)
-  const agent = model.agent
-  const title = agent?.title ?? model.paused?.title ?? model.name
-  const active = agent?.active ?? model.paused?.active
-  const when = active ? ago(active) : null
-  const commands = waitingOn(agent)
-  if (pending?.treatment === 'hide') return null
-  return (
-    <div
-      data-pane={model.pane}
-      className={cn(
-        'group relative grid rounded-md border text-xs transition-colors',
-        selected ? 'border-ring bg-muted' : 'border-transparent hover:bg-muted/60',
-        pending && 'opacity-70',
-        failedOf(label, model.key) && 'border-destructive'
-      )}
-    >
-      <span aria-hidden className={cn('absolute inset-y-2 left-1 w-0.5 rounded-full', STRIP_DOT[model.look.name] ?? 'bg-lime-600/70')} />
-      <button
-        type="button"
-        disabled={model.disabled || Boolean(pending)}
-        title={tip(pending?.text ?? model.title)}
-        onClick={() => (model.paused ? onShow(model) : model.onClick && perform(label, model.onClick, model.key))}
-        className="grid gap-1 py-2 pr-2.5 pl-3.5 text-left outline-none disabled:cursor-default"
-      >
-        <span className="line-clamp-2 min-w-0 pr-4 font-medium break-words">{title}</span>
-        <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-muted-foreground">
-          {pending ? (
-            <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded-full border border-border px-1.5 text-[10.5px] font-medium text-foreground">
-              <LoaderCircle className="size-3 animate-spin" />
-              {pending.text}
-            </span>
-          ) : (
-            <span className={cn('inline-flex h-5 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10.5px] font-medium', LOOK_CLASS[model.look.name])}>
-              <span aria-hidden>{model.look.dot}</span>
-              {STATUS_WORD[model.look.name]}
-            </span>
-          )}
-          {model.paused && <Pause aria-label="paused" className="size-2.5 fill-current opacity-60" />}
-          {[model.name === 'claude' ? null : model.name, when].filter(Boolean).join(' · ')}
-        </span>
-        {commands && <span className="truncate font-mono text-[10.5px] text-amber-700 dark:text-amber-400">{commands[0].split('\n')[0]}</span>}
-      </button>
-      {model.onClose && (
-        <button
-          type="button"
-          aria-label={model.closeTitle}
-          title={tip(model.closeTitle)}
-          disabled={model.closeDisabled || Boolean(pending)}
-          onClick={() => perform(label, model.onClose!, model.key)}
-          className="absolute top-1.5 right-1.5 rounded p-0.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100"
-        >
-          <X className="size-3" />
-        </button>
-      )}
-    </div>
-  )
-}
-
-/** The app's Claude sessions as cards grouped by what they need; collapsed, a column of their dots. */
-type SessionListProps = {
-  label: string
-  w: App | null
-  /** Whether the chat shows this card's session. */
-  shows: (model: ChipModel) => boolean
-  /** Whether the chat shows the new session's placeholder: its Starting card is then the selected one. */
-  showsStarting: boolean
-  /** Opens a paused session: shows it in the chat and brings it back. */
-  onShow: (model: ChipModel) => void
-}
-
-const SessionList = ({ label, w, shows, showsStarting, onShow }: SessionListProps) => {
-  const tip = useTip()
-  const { perform, isBusy, pendingOf } = useControls()
-  const [open, setOpen] = useSharedPref('wt:sessionsOpen', true)
-  const toggle = () => setOpen(!open)
-  const models = sessionControls(w, isBusy(label, w))
-  const chips = models.filter((model): model is ChipModel => model.kind === 'chip' && pendingOf(label, model.key)?.treatment !== 'hide')
-  // ▶ claude is New session; the other starts (release, watch) sit above it as chips.
-  const starts = models.filter((model): model is StartModel => model.kind === 'start')
-  const start = starts.find((model) => model.key === 'claude')
-  const otherStarts = starts.filter((model) => model !== start)
-  // New session's placeholder, until the session it starts shows up.
-  const starting = start && pendingOf(label, start.key)
-
-  if (!open) {
-    return (
-      <div className="flex h-full w-8 flex-col items-center gap-2.5 border-r py-3">
-        <Button size="icon-xs" variant="ghost" aria-label="Show sessions" title={tip('Show the sessions')} onClick={toggle}>
-          <ChevronsRight />
-        </Button>
-        {chips.map((model) => (
-          <button
-            key={model.key}
-            type="button"
-            aria-label={model.title}
-            title={tip((model.agent?.title ?? model.paused?.title ?? model.name) + ': ' + model.look.title)}
-            disabled={model.disabled}
-            onClick={() => (model.paused ? onShow(model) : model.onClick && perform(label, model.onClick, model.key))}
-            className={cn('flex size-2.5 items-center justify-center rounded-full', !model.paused && (STRIP_DOT[model.look.name] ?? 'bg-lime-600/70'), shows(model) && 'ring-2 ring-ring ring-offset-1 ring-offset-background')}
-          >
-            {model.paused && <Pause className="size-2.5 fill-current text-lime-600/70" />}
-          </button>
-        ))}
-        {start && (
-          <button type="button" aria-label={start.title} title={tip(starting ? starting.text : start.title)} disabled={start.disabled || Boolean(starting)} onClick={() => perform(label, start.onClick, start.key)} className="text-muted-foreground hover:text-foreground">
-            {starting ? <LoaderCircle className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-          </button>
-        )}
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex h-full w-60 flex-col border-r">
-      <div className="flex min-h-10 items-center gap-2 border-b px-3 py-1.5">
-        <span className="flex-1 text-[10px] font-medium tracking-widest text-muted-foreground uppercase">Sessions</span>
-        <Button size="icon-xs" variant="ghost" aria-label="Hide sessions" title={tip('Hide the sessions to a column of dots')} onClick={toggle}>
-          <ChevronsLeft />
-        </Button>
-      </div>
-      <div className="grid min-h-0 flex-1 auto-rows-max gap-3 overflow-y-auto px-1.5 py-2">
-        {groupSessions(chips).map((group) => (
-          <div key={group.name} className="grid gap-0.5">
-            <span className="px-2.5 text-[10px] font-medium tracking-widest text-muted-foreground uppercase">{group.name}</span>
-            {group.chips.map((model) => (
-              <SessionCard key={model.key} label={label} model={model} selected={shows(model)} onShow={onShow} />
-            ))}
-          </div>
-        ))}
-        {starting && (
-          <div className={cn('grid gap-1 rounded-md border border-dashed py-2 pr-2.5 pl-3.5 text-xs text-muted-foreground', showsStarting && 'border-ring bg-muted')}>
-            <span className="inline-flex items-center gap-1.5 font-medium">
-              <LoaderCircle className="size-3 animate-spin" />
-              {starting.text}
-            </span>
-          </div>
-        )}
-        {!chips.length && !starting && <p className="px-2.5 text-xs text-muted-foreground">No Claude session yet.</p>}
-      </div>
-      {start && (
-        <div className="grid gap-2 border-t p-2">
-          {otherStarts.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {otherStarts.map((model) => (
-                <StartChip key={model.key} label={label} model={model} />
-              ))}
-            </div>
-          )}
-          <Button size="sm" variant="outline" className="w-full" title={tip(start.title)} disabled={start.disabled || Boolean(starting)} onClick={() => perform(label, start.onClick, start.key)}>
-            {starting ? <LoaderCircle className="animate-spin" /> : <Plus />} New session
-          </Button>
-        </div>
-      )}
-    </div>
-  )
-}
-
 type Dropped = { key: string; name: string; preview?: string; path?: string; error?: string }
 let dropCount = 0
 const newDropKey = () => 'drop' + ++dropCount
@@ -567,13 +385,6 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
   const stopped = inPane.find((candidate) => candidate.sessionId === picked) ?? inPane[0] ?? null
   const resumeChip = stopped ? sessionControls(w, isBusy(label, w)).find((model): model is ChipModel => model.kind === 'chip' && model.paused?.sessionId === stopped.sessionId) : undefined
   const resume = () => resumeChip?.onClick && !resumeChip.disabled && perform(label, resumeChip.onClick, resumeChip.key)
-  const show = (model: ChipModel) => {
-    setPicked(model.paused!.sessionId)
-    onSelect(model.paused!.paneId)
-    if (model.onClick && !model.disabled) perform(label, model.onClick, model.key)
-  }
-  // While the new session's placeholder is up, no card: the chat isn't showing the one still selected.
-  const shows = (model: ChipModel) => !placeholder && (model.paused ? model.paused.sessionId === stopped?.sessionId : Boolean(agent && model.pane === agent.paneId))
   // Coming back to the cockpit resumes the chat it was showing, if the idle reaper stopped it meanwhile (not if you did).
   const resumeOnReturn = useRef(resume)
   resumeOnReturn.current = () => stopped?.by === 'reaper' && resume()
@@ -803,7 +614,7 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
   const pending = stuckInput ? `Typed in herdr, not sent: “${stuckInput}”. Send or clear it there first.` : ''
   const shown =
     notice?.text || pending || (blocked ? 'Answer the prompt above first, or Esc to cancel it.' : working ? 'Claude is working: a message sent now waits in its queue and reaches it at its next step. Esc interrupts it instead.' : '')
-  const name = placeholder ? 'New session' : agent ? (agent.title ?? sessionName(w, agent)) : (stopped?.title ?? 'claude')
+  const name = placeholder ? 'Claude' : agent ? (agent.title ?? sessionName(w, agent)) : (stopped?.title ?? 'claude')
   const queuedRow = queued && (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-0.5 opacity-60">
       <span className="flex items-center gap-1.5 text-[10px] font-medium tracking-widest text-muted-foreground uppercase">
@@ -815,6 +626,10 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
       <div className="rounded-lg bg-sky-50 px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] dark:bg-sky-950/60">{queued.text}</div>
     </div>
   )
+
+  // With no session in the chat: Start Claude, and dictating starts it too, with what was said as its first prompt.
+  const newStart = agent || stopped || placeholder ? undefined : sessionControls(w, isBusy(label, w)).find((model): model is StartModel => model.kind === 'start' && model.key === 'claude')
+  const canStartNew = Boolean(newStart && !newStart.disabled && !startingNew)
 
   let body: ReactNode
   if (placeholder) {
@@ -879,12 +694,17 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
       </div>
     )
   } else {
-    body = <p className="row-start-3 px-8 py-4 text-sm text-muted-foreground">{w?.agents?.length || w?.paused?.length ? 'Pick a session from the list.' : 'Start one with New session.'}</p>
+    body = (
+      <div className="row-start-3 grid content-start justify-items-start gap-3 px-8 py-4">
+        <p className="text-sm text-muted-foreground">Claude isn't running.</p>
+        {newStart && (
+          <Button size="sm" variant="outline" title={tip(newStart.title)} disabled={!canStartNew} onClick={() => perform(label, newStart.onClick, newStart.key)}>
+            <Play /> Start Claude
+          </Button>
+        )}
+      </div>
+    )
   }
-
-  // With no session in the chat, dictating starts a new one (New session), with what was said as its first prompt.
-  const newStart = agent || stopped || placeholder ? undefined : sessionControls(w, isBusy(label, w)).find((model): model is StartModel => model.kind === 'start' && model.key === 'claude')
-  const canStartNew = Boolean(newStart && !newStart.disabled && !startingNew)
 
   // Runs with the chat collapsed too: a recording stopped from this page sends to its session, or opens the chat to edit.
   const dictation = useDictation({
@@ -956,7 +776,6 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
         void interrupt()
       }}
     >
-      <SessionList label={label} w={w} shows={shows} showsStarting={placeholder} onShow={show} />
       <div className="grid h-full min-w-0 flex-1 grid-cols-[minmax(0,1fr)] grid-rows-[auto_auto_minmax(0,1fr)_auto]">
         <div className="row-start-1 flex min-h-10 items-center gap-2 border-b px-8 py-1.5">
           {placeholder ? (
@@ -1002,7 +821,7 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
               </ToggleGroup>
             </>
           ) : (
-            <span className="flex-1 text-sm text-muted-foreground">{w?.agents?.length || w?.paused?.length ? '' : 'No Claude session yet.'}</span>
+            <span className="flex-1 text-sm text-muted-foreground">No Claude session yet.</span>
           )}
           {onToggleOverlay && (
             <Button
@@ -1068,7 +887,7 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
             placeholder={
               bringing
                 ? 'Message ' + name + ' (sent once it is up)'
-                : working ? 'Claude is working; a message now reaches it at its next step' : agent || stopped ? 'Message ' + name + ' (Enter sends, Shift+Enter for a new line)' : 'Pick a running session to message it'
+                : working ? 'Claude is working; a message now reaches it at its next step' : agent || stopped ? 'Message ' + name + ' (Enter sends, Shift+Enter for a new line)' : 'Start Claude to message it'
             }
             className="max-h-[33vh] min-h-16 resize-none text-sm"
             onChange={(event) => {

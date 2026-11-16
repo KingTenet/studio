@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# The studio's one command. `studio up` updates this harness (git pull --ff-only; when that fails it carries on
+# with the version there is), builds the cockpit page if it is missing or out of date, starts the studio's herdr
+# workspace, or completes it if it's already there, and opens the cockpit at http://localhost:4000.
+#
+# The workspace has a tab for each of these:
+#   claude   Claude working on the app, in auto mode with claude/settings.json (its hooks and allowlist),
+#            continuing the app's last conversation if it has one
+#   studio   the cockpit's server (scripts/lib/studio-server.js)
+#   app      the app's dev server (npm run dev, on the app's port, 4001)
+# A tab that is running is left alone, so running `studio up` again reuses the workspace. A tab left at its
+# shell prompt (its command exited, or herdr restored it after a restart) runs its command again. After an
+# update the studio tab is restarted, so the new server code is the one running.
+#
+# Usage: studio up [--dry-run]   # --dry-run prints what each tab would run and changes nothing
+#
+# Environment: STUDIO_HOME (default ~/.studio, holding config.json with the app's appDir and appPort),
+# STUDIO_PORT (the cockpit's port, default 4000), STUDIO_WORKSPACE (the workspace's label, default studio),
+# STUDIO_CLAUDE_CMD (run in place of claude, for trying this out), STUDIO_NO_OPEN=1 (don't open the browser).
+set -euo pipefail
+
+STUDIO_DIR="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
+export STUDIO_DIR
+export STUDIO_HOME="${STUDIO_HOME:-$HOME/.studio}"
+export STUDIO_PORT="${STUDIO_PORT:-4000}"
+WORKSPACE="${STUDIO_WORKSPACE:-studio}"
+CONFIG="$STUDIO_HOME/config.json"
+
+usage() { echo "usage: studio up [--dry-run]" >&2; exit 2; }
+[ "${1:-}" = up ] || usage
+DRY_RUN=false
+case "${2:-}" in
+  "") ;;
+  --dry-run) DRY_RUN=true ;;
+  *) usage ;;
+esac
+
+q() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+config() { [ -f "$CONFIG" ] && jq -r "$1 // empty" "$CONFIG" || true; }
+
+APP_DIR="$(config .appDir)"
+APP_DIR="${APP_DIR:-$HOME/Studio/my-app}"
+APP_PORT="$(config .appPort)"
+APP_PORT="${APP_PORT:-4001}"
+if [ ! -d "$APP_DIR" ]; then
+  echo "There's no app at $APP_DIR. Set appDir in $CONFIG to its folder." >&2
+  exit 1
+fi
+
+# Claude's transcripts live in a folder named after the app's path; one there means a conversation to continue.
+has_conversation() { compgen -G "$HOME/.claude/projects/$(printf %s "$APP_DIR" | sed 's/[^A-Za-z0-9]/-/g')/*.jsonl" >/dev/null; }
+
+CLAUDE="claude --permission-mode auto --settings $(q "$STUDIO_DIR/claude/settings.json")"
+has_conversation && CLAUDE="$CLAUDE --continue"
+CLAUDE="${STUDIO_CLAUDE_CMD:-$CLAUDE}"
+
+# Each tab: its label, the folder it starts in and its command. Dictation's whisper-server gets a tab here too, once it is set up.
+TABS="claude studio app"
+tab_cwd() { [ "$1" = studio ] && echo "$STUDIO_DIR" || echo "$APP_DIR"; }
+tab_command() {
+  case "$1" in
+    claude) echo "$CLAUDE" ;;
+    studio) echo "node $(q "$STUDIO_DIR/scripts/lib/studio-server.js")" ;;
+    app) echo "[ -d node_modules ] || npm install; PORT=$APP_PORT npm run dev" ;;
+  esac
+}
+tab_port() {
+  case "$1" in
+    studio) echo "$STUDIO_PORT" ;;
+    app) echo "$APP_PORT" ;;
+  esac
+}
+
+if [ "$DRY_RUN" = true ]; then
+  echo "Workspace $WORKSPACE, with STUDIO_DIR=$STUDIO_DIR STUDIO_HOME=$STUDIO_HOME STUDIO_PORT=$STUDIO_PORT"
+  for name in $TABS; do echo "  $name (in $(tab_cwd "$name")): $(tab_command "$name")"; done
+  exit 0
+fi
+
+# --- update and build -----------------------------------------------------------------------------
+
+# A pull that brings changes reruns the new version of this script, which then restarts the studio server.
+if [ -z "${STUDIO_UPDATED:-}" ]; then
+  before=$(git -C "$STUDIO_DIR" rev-parse HEAD)
+  if ! out=$(GIT_TERMINAL_PROMPT=0 git -C "$STUDIO_DIR" pull --ff-only --quiet 2>&1); then
+    echo "⚠️  Couldn't update Studio, so starting the version you have. ($(echo "$out" | head -n1))"
+  fi
+  if [ "$(git -C "$STUDIO_DIR" rev-parse HEAD)" != "$before" ]; then
+    echo "Studio was updated."
+    STUDIO_UPDATED=1 exec "$0" "$@"
+  fi
+fi
+
+WEB="$STUDIO_DIR/web"
+PAGE="$WEB/dist/cockpit.html"
+if [ ! -f "$PAGE" ] || [ -n "$(find "$WEB/src" "$WEB/cockpit.html" "$WEB/package.json" "$WEB/pnpm-lock.yaml" "$WEB/vite.config.ts" -newer "$PAGE" -print -quit)" ]; then
+  echo "Building the cockpit page…"
+  pnpm --dir "$WEB" install --frozen-lockfile --silent
+  pnpm --dir "$WEB" --silent build >/dev/null
+fi
+
+# --- the herdr workspace --------------------------------------------------------------------------
+
+# herdr's server runs in the background; without one, start it headless.
+if ! herdr workspace list >/dev/null 2>&1; then
+  nohup herdr server >/dev/null 2>&1 &
+  for _ in $(seq 1 40); do
+    herdr workspace list >/dev/null 2>&1 && break
+    sleep 0.25
+  done
+fi
+
+# New panes get their environment from herdr's server, not from this shell, so the studio's variables are passed on.
+ENV_ARGS=(--env "STUDIO_DIR=$STUDIO_DIR" --env "STUDIO_HOME=$STUDIO_HOME" --env "STUDIO_PORT=$STUDIO_PORT")
+
+ws=$(herdr workspace list | jq -r --arg label "$WORKSPACE" '.result.workspaces[] | select(.label == $label) | .workspace_id' | head -n1)
+first=""
+if [ -z "$ws" ]; then
+  created=$(herdr workspace create --cwd "$(tab_cwd claude)" --label "$WORKSPACE" --no-focus "${ENV_ARGS[@]}")
+  ws=$(echo "$created" | jq -r '.result.workspace.workspace_id')
+  herdr tab rename "$(echo "$created" | jq -r '.result.tab.tab_id')" claude >/dev/null
+  first=$(echo "$created" | jq -r '.result.root_pane.pane_id')
+fi
+
+tab_id() { herdr tab list --workspace "$ws" | jq -r --arg label "$1" '.result.tabs[] | select(.label == $label) | .tab_id' | head -n1; }
+tab_pane() { herdr pane list --workspace "$ws" | jq -r --arg tab "$1" '[.result.panes[] | select(.tab_id == $tab)][0].pane_id'; }
+at_prompt() { herdr pane process-info --pane "$1" | jq -e '.result.process_info | .foreground_process_group_id == .shell_pid' >/dev/null; }
+port_busy() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
+
+start_in() {
+  local name=$1 pane=$2 port
+  port=$(tab_port "$name")
+  if [ -n "$port" ] && port_busy "$port"; then
+    echo "⚠️  $name: something else is already using port $port, so it can't start" >&2
+    return
+  fi
+  herdr pane run "$pane" "$(tab_command "$name")" >/dev/null
+}
+
+for name in $TABS; do
+  if [ "$name" = claude ] && [ -n "$first" ]; then
+    start_in claude "$first"
+    echo "claude: started"
+    continue
+  fi
+  tab=$(tab_id "$name")
+  if [ -z "$tab" ]; then
+    pane=$(herdr tab create --workspace "$ws" --cwd "$(tab_cwd "$name")" --label "$name" --no-focus "${ENV_ARGS[@]}" | jq -r '.result.root_pane.pane_id')
+    start_in "$name" "$pane"
+    echo "$name: started"
+    continue
+  fi
+  pane=$(tab_pane "$tab")
+  if [ "$name" = studio ] && [ -n "${STUDIO_UPDATED:-}" ] && ! at_prompt "$pane"; then
+    herdr pane send-keys "$pane" C-c >/dev/null
+    for _ in $(seq 1 20); do
+      port_busy "$STUDIO_PORT" || break
+      sleep 0.25
+    done
+  fi
+  if at_prompt "$pane"; then
+    start_in "$name" "$pane"
+    echo "$name: started again"
+  else
+    echo "$name: already running"
+  fi
+done
+
+# --- the cockpit ----------------------------------------------------------------------------------
+
+URL="http://localhost:$STUDIO_PORT"
+for _ in $(seq 1 60); do
+  curl -sf -o /dev/null "$URL/" && break
+  sleep 0.25
+done
+curl -sf -o /dev/null "$URL/" || echo "⚠️  The cockpit isn't answering at $URL yet; see the studio tab in herdr." >&2
+echo "Studio is at $URL"
+[ -n "${STUDIO_NO_OPEN:-}" ] || open "$URL"

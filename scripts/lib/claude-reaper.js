@@ -107,14 +107,23 @@ const reapAction = ({ agent, idleSince, now, thresholdMs, facts }) => {
 
 const shellQuote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
 
+/** The folder this harness lives in, which Claude's hooks find their scripts through ($STUDIO_DIR). */
+const STUDIO_DIR = path.resolve(__dirname, '..', '..');
+
+/** How Claude starts in the studio: in auto mode, with the studio's settings (hooks and the allowlist). Kept in step with bin/studio. */
+const claudeCommand = () => `claude --permission-mode auto --settings ${shellQuote(path.join(STUDIO_DIR, 'claude', 'settings.json'))}`;
+
 /**
- * The command to bring a session back, keeping its permission mode, from its directory. A session
+ * The command to bring a session back, keeping its permission mode and settings file, from its directory. A session
  * that never got a message has nothing saved to resume, so it gets a fresh `claude` instead.
  */
 const resumeCommand = ({ argv, sessionId, cwd, shellCwd, saved = true }) => {
-  const modeAt = argv.indexOf('--permission-mode');
-  const mode = modeAt >= 0 && argv[modeAt + 1] ? ` --permission-mode ${argv[modeAt + 1]}` : '';
-  const command = saved ? `claude${mode} --resume ${sessionId}` : `claude${mode}`;
+  const flag = (name) => {
+    const at = argv.indexOf(name);
+    return at >= 0 && argv[at + 1] ? ` ${name} ${name === '--settings' ? shellQuote(argv[at + 1]) : argv[at + 1]}` : '';
+  };
+  const flags = flag('--permission-mode') + flag('--settings');
+  const command = saved ? `claude${flags} --resume ${sessionId}` : `claude${flags}`;
   return shellCwd === cwd ? command : `cd ${shellQuote(cwd)} && ${command}`;
 };
 
@@ -364,7 +373,9 @@ const runInClaudeTab = (worktreePath, cwd, command, sessionId, reuse = null) => 
     run('herdr', ['pane', 'send-keys', pane, 'C-c']);
   } else {
     const workspace = run(path.join(__dirname, '..', 'worktree-workspace.sh'), [worktreePath]).trim();
-    const created = herdr('tab', 'create', '--workspace', workspace, '--cwd', cwd, '--label', 'claude').result;
+    // A new pane gets its environment from herdr, not from here, so the hooks' variables are passed on.
+    const env = [`STUDIO_DIR=${STUDIO_DIR}`, ...(process.env.STUDIO_HOME ? [`STUDIO_HOME=${process.env.STUDIO_HOME}`] : [])].flatMap((pair) => ['--env', pair]);
+    const created = herdr('tab', 'create', '--workspace', workspace, '--cwd', cwd, '--label', 'claude', ...env).result;
     pane = created.root_pane.pane_id;
     tab = created.tab.tab_id;
   }
@@ -379,7 +390,7 @@ const runInClaudeTab = (worktreePath, cwd, command, sessionId, reuse = null) => 
  * a pane an earlier session ran in would keep its id, so the cockpit would show that session's state there.
  */
 const startWorktree = (worktreePath, message = null) => {
-  const pane = runInClaudeTab(worktreePath, worktreePath, 'claude' + (message ? ` ${shellQuote(message)}` : ''), null);
+  const pane = runInClaudeTab(worktreePath, worktreePath, claudeCommand() + (message ? ` ${shellQuote(message)}` : ''), null);
   console.log(`Started Claude in ${pane}`);
 };
 
@@ -455,4 +466,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { COMMAND_SHELL_MARKER, notePaneSession, withRealSessions, closedLogPath, commandText, pausedSessions, processTree, runningCommands, readClosed, reapAction, resumeCommand, trackIdle, typedInput };
+module.exports = { COMMAND_SHELL_MARKER, notePaneSession, withRealSessions, claudeCommand, closedLogPath, commandText, pausedSessions, processTree, runningCommands, readClosed, reapAction, resumeCommand, trackIdle, typedInput };

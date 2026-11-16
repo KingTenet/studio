@@ -28,21 +28,6 @@ export const LOOKS: Record<LookName, Look> = {
   command: { name: 'running', dot: '⧗', title: 'waiting on a command it started' },
 }
 
-/** A status's chip colours and pulse; shared by the chips and the cockpit's session cards. */
-export const LOOK_CLASS: Record<LookName, string> = {
-  blocked: 'border-red-600 bg-red-600 text-white animate-pulse',
-  working: 'border-sky-600 bg-sky-600 text-white animate-pulse',
-  done: 'border-teal-500/70 text-teal-700 dark:text-teal-400',
-  idle: 'border-lime-600/50 text-lime-700 dark:text-lime-400',
-  unknown: 'border-lime-600/50 text-lime-700 dark:text-lime-400',
-  running: 'border-amber-500 text-amber-700 dark:text-amber-400 animate-pulse',
-  finished: 'border-border text-muted-foreground',
-  paused: 'border-dashed border-border text-muted-foreground',
-  on: 'border-emerald-600 bg-emerald-600 text-white',
-  exited: 'border-red-500 text-red-600 dark:text-red-400',
-  command: 'border-amber-500 text-amber-700 dark:text-amber-400 animate-pulse',
-}
-
 /** A herdr tab, Claude session or dev server: click goes to it, × stops it. */
 export type ChipModel = {
   kind: 'chip'
@@ -131,9 +116,15 @@ const pausedChip = (w: App, busy: boolean, name: string, session: PausedSession)
 
 const stopSession = (paneId: string): Action => ({ type: 'run', action: 'stop-session', extra: { paneId } })
 
-/** The pane of the app's most recently active Claude session, live or paused (by its last transcript write, else when it was stopped); null with none. */
+/** Whether a session belongs in the chat: it isn't in a tab a button started (Artifacts, for the artifact index). */
+export const inChat = (w: App, session: { tabId: string }) => !Object.values(w.tabs ?? {}).some((tab) => tab.tabId === session.tabId)
+
+/** The pane of the app's most recently active Claude session in the chat, live or paused (by its last transcript write, else when it was stopped); null with none. */
 export const latestSessionPane = (w: App): string | null =>
-  [...w.agents.map((agent) => ({ pane: agent.paneId, at: agent.active ?? '' })), ...w.paused.map((session) => ({ pane: session.paneId, at: session.active ?? session.ts }))].sort((a, b) => (a.at < b.at ? 1 : -1))[0]?.pane ?? null
+  [
+    ...w.agents.filter((agent) => inChat(w, agent)).map((agent) => ({ pane: agent.paneId, at: agent.active ?? '' })),
+    ...w.paused.filter((session) => inChat(w, session)).map((session) => ({ pane: session.paneId, at: session.active ?? session.ts })),
+  ].sort((a, b) => (a.at < b.at ? 1 : -1))[0]?.pane ?? null
 
 /** The jobs that bring up a session, which the chat then shows. */
 export const SESSION_ACTIONS = ['claude-start', 'resume']
@@ -199,11 +190,6 @@ const tabSessionChip = (w: App, busy: boolean, kind: 'artifacts', what: string):
 /** The Artifacts tab while open, then the app's other Claude sessions. */
 export const sessionControls = (w: App | null, busy: boolean): ControlModel[] =>
   !w ? [] : [tabSessionChip(w, busy, 'artifacts', 'Artifacts (the artifact index)'), ...agentChips(w, busy)].filter((model): model is ControlModel => Boolean(model))
-
-/** The groups the cockpit lists sessions under, most urgent first. */
-export const SESSION_GROUPS = ['Needs you', 'Running', 'Idle']
-
-export const sessionGroup = (look: LookName) => (look === 'blocked' ? 'Needs you' : look === 'working' || look === 'running' ? 'Running' : 'Idle')
 
 export const blockedTitle = (base: string, apps: (App | null | undefined)[]) => {
   const blocked = apps.reduce((n, w) => n + (w?.agents ?? []).filter((a) => a.status === 'blocked').length, 0)
