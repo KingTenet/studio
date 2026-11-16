@@ -11,7 +11,7 @@ const path = require('node:path');
 // The server keeps its logs under STUDIO_HOME, read once at load: point it at a throwaway folder before loading it.
 process.env.STUDIO_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-server-test-'));
 
-const { appAgents, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, freeTextKeys, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats } = require('./studio-server');
+const { serveVadFile, appAgents, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, freeTextKeys, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats } = require('./studio-server');
 
 test('isLocalHost: localhost and 127.0.0.1 only, so a rebound DNS name is refused', () => {
   assert.ok(isLocalHost('localhost'));
@@ -453,4 +453,16 @@ test("devLogTail: the last 50 lines of the app's data/logs/dev.log, without colo
   } finally {
     rmSync(app, { recursive: true, force: true });
   }
+});
+
+test('serveVadFile: serves the speech detector and the onnxruntime files it loads from web/node_modules', () => {
+  const served = (name) => {
+    const res = { status: 0, type: '', writeHead(status, headers) { this.status = status; this.type = headers?.['Content-Type'] ?? ''; return this; }, end() { return this; } };
+    serveVadFile(res, name);
+    return [res.status, res.type];
+  };
+  assert.deepEqual(served('ort-wasm-simd-threaded.mjs'), [200, 'text/javascript']);
+  assert.deepEqual(served('ort-wasm-simd-threaded.wasm'), [200, 'application/wasm']);
+  assert.deepEqual(served('silero_vad_v5.onnx'), [200, 'application/octet-stream']);
+  assert.equal(served('../../package.json')[0], 404);
 });
