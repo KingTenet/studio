@@ -54,7 +54,9 @@
  *        node lib/feature.js push [app] [branch…]  push develop, those branches and every branch whose push failed
  *        node lib/feature.js show [app]            the open feature and pending pushes, as JSON
  *        node lib/feature.js digest [app]          write the summary's digest of the open feature; prints its path
- * The hooks do nothing outside the app's folder, or without the app's repo.
+ * The hooks do nothing outside the app's folder, or without the app's repo, or for a Claude that isn't the chat's: one started
+ * with STUDIO_ROLE set to anything but chat (the Artifacts tab's, `artifacts`; the feature summariser's, `summary`). A Claude
+ * with no STUDIO_ROLE counts as the chat's, so one started before roles existed keeps its checkpoints.
  *
  * Run tests: node --test lib/feature.test.js
  */
@@ -979,10 +981,18 @@ const readStdin = () => {
   }
 };
 
+/**
+ * Whether the hooks run for the chat's Claude (bin/studio and the reaper start it with STUDIO_ROLE=chat): another Claude in the
+ * app's folder (STUDIO_ROLE=artifacts or summary) must not start features, make checkpoints or put back the chat's changes.
+ */
+const isChat = (env = process.env) => !env.STUDIO_ROLE || env.STUDIO_ROLE === 'chat';
+
 if (require.main === module) {
   const [command, ...args] = process.argv.slice(2);
   const print = (value) => process.stdout.write(JSON.stringify(value, null, 2) + '\n');
-  if (command === 'prompt-submit' || command === 'stop') {
+  if (['prompt-submit', 'stop', 'pre-tool-use'].includes(command) && !isChat()) {
+    process.exit(0);
+  } else if (command === 'prompt-submit' || command === 'stop') {
     // A hook must never fail the turn: what goes wrong is logged to stderr, which Claude Code shows in its transcript view only.
     try {
       const event = readStdin();
@@ -1021,4 +1031,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { EFFORT, bringBack, checkpoint, discard, endPreview, fallbackSummary, forgetWentBack, goBack, keep, lastReply, nameFromPrompt, nextVersion, notePrompt, onPreToolUse, onPromptSubmit, onStop, preview, putBack, readMode, setMode, push, pushInBackground, read, restore, restoreData, runGate, snapshotData, start, stateDir, summarise, turnLabel, turnMode, versions, withLock, writeDigest };
+module.exports = { EFFORT, bringBack, isChat, checkpoint, discard, endPreview, fallbackSummary, forgetWentBack, goBack, keep, lastReply, nameFromPrompt, nextVersion, notePrompt, onPreToolUse, onPromptSubmit, onStop, preview, putBack, readMode, setMode, push, pushInBackground, read, restore, restoreData, runGate, snapshotData, start, stateDir, summarise, turnLabel, turnMode, versions, withLock, writeDigest };

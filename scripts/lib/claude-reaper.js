@@ -373,8 +373,9 @@ const runInClaudeTab = (worktreePath, cwd, command, sessionId, reuse = null) => 
     run('herdr', ['pane', 'send-keys', pane, 'C-c']);
   } else {
     const workspace = run(path.join(__dirname, '..', 'worktree-workspace.sh'), [worktreePath]).trim();
-    // A new pane gets its environment from herdr, not from here, so the hooks' variables are passed on.
-    const env = [`STUDIO_DIR=${STUDIO_DIR}`, ...(process.env.STUDIO_HOME ? [`STUDIO_HOME=${process.env.STUDIO_HOME}`] : [])].flatMap((pair) => ['--env', pair]);
+    // A new pane gets its environment from herdr, not from here, so the hooks' variables are passed on. Its Claude is the chat's
+    // (STUDIO_ROLE=chat, see lib/feature.js); a pane reused above keeps the role it was made with.
+    const env = [`STUDIO_DIR=${STUDIO_DIR}`, ...(process.env.STUDIO_HOME ? [`STUDIO_HOME=${process.env.STUDIO_HOME}`] : []), 'STUDIO_ROLE=chat'].flatMap((pair) => ['--env', pair]);
     const created = herdr('tab', 'create', '--workspace', workspace, '--cwd', cwd, '--label', 'claude', ...env).result;
     pane = created.root_pane.pane_id;
     tab = created.tab.tab_id;

@@ -14,5 +14,5 @@ DIGEST=$(node "$SCRIPTS/lib/feature.js" digest "$APP")
 
 cd "$APP"
 # Only Read: the digest holds everything it needs. No transcript of its own, so it never shows among her chats.
-# The skill comes from this harness, loaded as the plugin studio.
-claude -p "/studio:feature-summary $DIGEST" --plugin-dir "$(dirname "$SCRIPTS")" --no-session-persistence --allowedTools Read </dev/null
+# The skill comes from this harness, loaded as the plugin studio. STUDIO_ROLE=summary: the feature and mode hooks are the chat's.
+STUDIO_ROLE=summary claude -p "/studio:feature-summary $DIGEST" --plugin-dir "$(dirname "$SCRIPTS")" --no-session-persistence --allowedTools Read </dev/null

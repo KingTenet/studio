@@ -125,11 +125,14 @@ fi
 
 # New panes get their environment from herdr's server, not from this shell, so the studio's variables are passed on.
 ENV_ARGS=(--env "STUDIO_DIR=$STUDIO_DIR" --env "STUDIO_HOME=$STUDIO_HOME" --env "STUDIO_PORT=$STUDIO_PORT" --env "STUDIO_WHISPER_PORT=$STUDIO_WHISPER_PORT")
+# The claude tab's Claude is the chat's: only its turns start features, make checkpoints and keep to the mode (lib/feature.js).
+# Set on the pane, so a session the reaper stops and resumes there keeps it.
+tab_env() { [ "$1" = claude ] && echo "--env STUDIO_ROLE=chat" || true; }
 
 ws=$(herdr workspace list | jq -r --arg label "$WORKSPACE" '.result.workspaces[] | select(.label == $label) | .workspace_id' | head -n1)
 first=""
 if [ -z "$ws" ]; then
-  created=$(herdr workspace create --cwd "$(tab_cwd claude)" --label "$WORKSPACE" --no-focus "${ENV_ARGS[@]}")
+  created=$(herdr workspace create --cwd "$(tab_cwd claude)" --label "$WORKSPACE" --no-focus "${ENV_ARGS[@]}" $(tab_env claude))
   ws=$(echo "$created" | jq -r '.result.workspace.workspace_id')
   herdr tab rename "$(echo "$created" | jq -r '.result.tab.tab_id')" claude >/dev/null
   first=$(echo "$created" | jq -r '.result.root_pane.pane_id')
@@ -158,7 +161,7 @@ for name in $TABS; do
   fi
   tab=$(tab_id "$name")
   if [ -z "$tab" ]; then
-    pane=$(herdr tab create --workspace "$ws" --cwd "$(tab_cwd "$name")" --label "$name" --no-focus "${ENV_ARGS[@]}" | jq -r '.result.root_pane.pane_id')
+    pane=$(herdr tab create --workspace "$ws" --cwd "$(tab_cwd "$name")" --label "$name" --no-focus "${ENV_ARGS[@]}" $(tab_env "$name") | jq -r '.result.root_pane.pane_id')
     start_in "$name" "$pane"
     echo "$name: started"
     continue

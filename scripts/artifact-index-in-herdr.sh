@@ -31,11 +31,12 @@ if [ -n "$existing" ]; then
   # A reaped session leaves `claude --resume <id>` typed at the prompt; clear it so it doesn't prefix the new command.
   herdr pane send-keys "$pane" ctrl+u >/dev/null
 else
-  pane=$(herdr tab create --workspace "$ws" --cwd "$TARGET" --label "$LABEL" | jq -r '.result.root_pane.pane_id')
+  pane=$(herdr tab create --workspace "$ws" --cwd "$TARGET" --label "$LABEL" --env STUDIO_ROLE=artifacts | jq -r '.result.root_pane.pane_id')
 fi
 q() { printf %q "$1"; }
 # As bin/studio starts Claude (the studio's hooks, allowlist and skills), with the hooks' variables on the command line,
 # since a pane takes its environment from herdr. The skill is named with its plugin, studio:, so a personal skill of the
-# same name can't stand in for it.
-herdr pane run "$pane" "STUDIO_DIR=$(q "$STUDIO_DIR") STUDIO_HOME=$(q "$STUDIO_HOME") claude --permission-mode auto --settings $(q "$STUDIO_DIR/claude/settings.json") --plugin-dir $(q "$STUDIO_DIR") '/studio:artifact-index$MODE'"
+# same name can't stand in for it. STUDIO_ROLE=artifacts keeps the feature and mode hooks off (they're the chat's; lib/feature.js),
+# on the pane too, so a session the reaper stops and resumes there keeps it.
+herdr pane run "$pane" "STUDIO_DIR=$(q "$STUDIO_DIR") STUDIO_HOME=$(q "$STUDIO_HOME") STUDIO_ROLE=artifacts claude --permission-mode auto --settings $(q "$STUDIO_DIR/claude/settings.json") --plugin-dir $(q "$STUDIO_DIR") '/studio:artifact-index$MODE'"
 echo "✅ Claude is ${MODE:+consolidating and }rebuilding the artifact index in the $LABEL tab ($pane)"

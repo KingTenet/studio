@@ -261,6 +261,44 @@ test('the hooks do nothing outside the app, or for a subagent', async () => {
   }
 });
 
+test("the hooks act only for the chat's Claude: the Artifacts tab's and the summariser's start no feature, make no checkpoint, deny nothing and put nothing back", async () => {
+  const t = setup();
+  try {
+    const as = (role, name, event) => {
+      const result = spawnSync(process.execPath, [SCRIPT, name], { cwd: t.app, env: { ...process.env, ...IDENTITY, STUDIO_HOME: t.home, STUDIO_ROLE: role }, input: JSON.stringify({ session_id: role, cwd: t.app, ...event }), encoding: 'utf8' });
+      assert.equal(result.status, 0);
+      assert.equal(result.stderr, '');
+      return result.stdout;
+    };
+    const edit = { tool_name: 'Edit', tool_input: { file_path: path.join(t.app, 'page.html') } };
+    for (const role of ['artifacts', 'summary']) {
+      // Build with no feature open: the Artifacts tab's /studio:artifact-index prompt starts nothing.
+      assert.equal(as(role, 'prompt-submit', { prompt: '/studio:artifact-index' }), '');
+      assert.equal(t.withEnv(() => read(t.app)).feature, null);
+      assert.equal(git(t.app, 'symbolic-ref', '--short', 'HEAD'), 'main');
+    }
+    // The chat's Build turn is under way, with a half-made change.
+    assert.match(as('chat', 'prompt-submit', { prompt: 'Add a footer' }), /"Add a footer"/);
+    fs.appendFileSync(path.join(t.app, 'page.html'), '<footer>half made</footer>\n');
+    t.withEnv(() => setMode(t.app, 'ask'));
+    for (const role of ['artifacts', 'summary']) {
+      // In Ask, their turn neither denies an edit nor, when it ends, puts back the chat's change or checkpoints it.
+      assert.equal(as(role, 'prompt-submit', { prompt: 'rebuild the index' }), '');
+      assert.equal(as(role, 'pre-tool-use', edit), '');
+      assert.equal(as(role, 'stop', { last_assistant_message: 'Done. Checkpoint: index' }), '');
+      assert.match(fs.readFileSync(path.join(t.app, 'page.html'), 'utf8'), /half made/);
+      assert.equal(t.withEnv(() => read(t.app)).feature.checkpoints.length, 0);
+    }
+    // The chat's own turn still ends as a Build turn and checkpoints its change. With no STUDIO_ROLE (a Claude started before
+    // roles existed) the hooks act as the chat's.
+    assert.equal(as('chat', 'stop', { last_assistant_message: 'Checkpoint: Added a footer' }), '');
+    assert.deepEqual(t.withEnv(() => read(t.app)).feature.checkpoints.map((c) => c.label), ['Added a footer']);
+    assert.match(as('', 'pre-tool-use', { ...edit, session_id: 'unset' }), /"permissionDecision":"deny"/);
+  } finally {
+    await t.cleanup();
+  }
+});
+
 /**
  * An app like the template, for Keep: package.json's `npm test` and `npm run typecheck` fail while a file named `broken` (or
  * `badtypes`) exists, FEATURES.md has v1's entry, and v1 is an annotated tag pushed with main. STUDIO_HOME is set in
