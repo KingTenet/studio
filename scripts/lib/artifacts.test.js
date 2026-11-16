@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { addNote, describe, folderFor, locate, markBuilt, pageTitle, publishesIn, readRegistry, record, remove, removeNote, supersede, worktreeOf } = require('./artifacts');
+const { addNote, describe, folderFor, locate, markBuilt, pageTitle, planName, publishesIn, readRegistry, record, remove, removeNote, supersede, worktreeOf } = require('./artifacts');
 
 let repo;
 let scratch;
@@ -47,6 +47,7 @@ test('record: files a publish under its worktree with the page title, a version 
     url: URL_A,
     version: 1,
     title: 'Throughput recording',
+    plan: null,
     description: 'A recording',
     filePath: undefined,
     snapshot: path.join('snapshots', 'aaaa-1111', 'v1'),
@@ -193,6 +194,7 @@ test('locate: finds an artifact in any worktree by id, with its newest local cop
         { version: 2, ts: 't2', snapshot: null },
       ],
       filePath: path.join(scratch, 'gone.html'),
+      plan: null,
       notes: [],
     }
   );
@@ -215,4 +217,25 @@ test('locate: an artifact never copied locally has no snapshot', () => {
   record({ sessionId: 's1', cwd: repo, ts: 't1', input: { file_path: path.join(scratch, 'missing.html'), description: 'Gone' }, response: URL_B });
   assert.equal(locate('bbbb-2222').snapshot, null);
   assert.equal(locate('bbbb-2222').name, 'Gone');
+});
+
+test('planName: the feature a plan page is for, from its studio-plan meta, plain and short; null for any other page', () => {
+  assert.equal(planName('<head><meta name="studio-plan" content="  Dark   mode &amp; themes "></head>'), 'Dark mode & themes');
+  assert.equal(planName("<META content='Recipe search' NAME='studio-plan'/>"), 'Recipe search');
+  assert.equal(planName('<meta name="studio-plan" content="' + 'x'.repeat(100) + '">'), 'x'.repeat(80));
+  assert.equal(planName('<meta name="studio-plan" content="">'), null);
+  assert.equal(planName('<meta name="description" content="A plan">'), null);
+  assert.equal(planName(null), null);
+});
+
+test("record / locate: a plan's feature name is kept per version, and locate gives the latest local copy's", () => {
+  const cwd = path.join(repo, 'app');
+  const plan = page('plan.html', 'Plan: dark mode', '');
+  fs.writeFileSync(plan, '<html><head><title>Plan</title><meta name="studio-plan" content="Dark mode"></head></html>');
+  assert.equal(record({ sessionId: 's1', cwd, ts: '2026-01-01T10:00:00Z', input: { file_path: plan }, response: URL_A }).plan, 'Dark mode');
+  assert.equal(locate('aaaa-1111').plan, 'Dark mode');
+  // A later version that is no longer a plan isn't one.
+  fs.writeFileSync(plan, '<html><head><title>Notes</title></head></html>');
+  record({ sessionId: 's1', cwd, ts: '2026-01-01T11:00:00Z', input: { file_path: plan, url: URL_A }, response: URL_A });
+  assert.equal(locate('aaaa-1111').plan, null);
 });

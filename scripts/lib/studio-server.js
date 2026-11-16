@@ -1400,7 +1400,9 @@ const handle = async (req, res) => {
   if (req.method === 'GET' && artifactRoute?.[1]) {
     const found = locateArtifact(artifactRoute[2]);
     const history = found?.history.map(({ version, ts, snapshot }) => ({ version, ts, local: Boolean(snapshot) }));
-    sendJson(res, found ? 200 : 404, found ? { ...found, folder: undefined, snapshot: undefined, history, local: Boolean(found.snapshot), label: LABEL } : { error: `no artifact ${artifactRoute[2]} is recorded` });
+    // page: the latest local copy's file, for Claude to read (a plan's [Build this] hands it over).
+    const page = found?.snapshot ? path.join(found.snapshot, 'index.html') : null;
+    sendJson(res, found ? 200 : 404, found ? { ...found, folder: undefined, snapshot: undefined, history, local: Boolean(found.snapshot), page, label: LABEL } : { error: `no artifact ${artifactRoute[2]} is recorded` });
     return;
   }
   if (req.method === 'GET' && artifactRoute) {

@@ -6,7 +6,9 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { describePick, PICK_NOTE_HINT, pickLabel, type ArtifactPick } from '@/lib/artifacts'
 import { uploadDrawing } from '@/lib/api'
 import { blockedTitle } from '@/lib/controls'
+import { afterBuild, chatAgentOf, onPublish, watchTurn, type TurnWatch } from '@/lib/plan'
 import { store } from '@/lib/store'
+import type { ArtifactInfo } from '@/lib/types'
 import { AppFrame } from './AppFrame'
 import { ArtifactsPane, type ArtifactDrawingHandle } from './ArtifactsPane'
 import { Chat } from './Chat'
@@ -100,6 +102,33 @@ const Layout = ({ selected, setSelected, adopt, focusMessage }: LayoutProps) => 
     document.title = blockedTitle((w?.name ?? 'Studio') + ' · Studio', [w])
   })
 
+  // The middle pane switches by itself on two events only: to Artifacts when the chat's Claude publishes (a plan or an explainer),
+  // and back to the app when a Build turn ends. A drawing she hasn't sent keeps her where she is (lib/plan.ts).
+  const middle = () => ({ source, drawInk: ink.attached, artifactInk: artifactInk.attached })
+  const onPublished = (artifact: ArtifactInfo) => {
+    const fromChat = !w?.agents?.some((agent) => agent.tab === 'Artifacts' && agent.sessionId === artifact.latest.sessionId)
+    const { preview, show } = onPublish(middle(), fromChat)
+    if (preview) setPreviewId(artifact.id)
+    if (show) showSource(show)
+  }
+  const chat = chatAgentOf(w)
+  // Checked on every render: watchTurn only reports the end of a Build turn once.
+  const turn = useRef<TurnWatch>(null)
+  useEffect(() => {
+    if (!w) return
+    const next = watchTurn(turn.current, chat, w.mode)
+    turn.current = next.watch
+    const to = next.buildEnded ? afterBuild(middle()) : null
+    if (to) showSource(to)
+  })
+
+  // What a plan's [Build this] has the chat send Claude: to the chat's Claude, shown in the chat first if another session was.
+  const [outbox, setOutbox] = useState<{ id: number; text: string } | null>(null)
+  const sendForHer = (text: string) => {
+    if (chat) setSelected(chat.paneId)
+    setOutbox((current) => ({ id: (current?.id ?? 0) + 1, text }))
+  }
+
   // The Output button sits by the switch: in the page's corner it would cover the chat's Send.
   const switcher = (
     <>
@@ -143,6 +172,7 @@ const Layout = ({ selected, setSelected, adopt, focusMessage }: LayoutProps) => 
       onToggleOverlay={pane.toggleOverlay}
       pageContext={pageContext}
       stickyFocus
+      outbox={outbox}
       attachments={[
         ...(ink.attached ? [{ key: 'drawing', label: 'drawing', title: 'Your drawing from the Draw tab, as it is when you send' }] : []),
         ...(artifactInk.attached ? [{ key: 'artifact-drawing', label: 'drawing on artifact', title: 'What you drew on the artifact, over the page as it shows when you send' }] : []),
@@ -174,7 +204,7 @@ const Layout = ({ selected, setSelected, adopt, focusMessage }: LayoutProps) => 
               <AppFrame label={LABEL} appUrl={w?.url ?? 'http://localhost:4001'} running={Boolean(w?.running)} switcher={switcher} banner={w && <PreviewBanner w={w} />} />
             </div>
             <div className={source === 'artifacts' ? 'h-full' : 'hidden'}>
-              <ArtifactsPane label={LABEL} switcher={switcher} previewId={previewId} onPreview={(id) => (id ? previewArtifact(id) : setPreviewId(null))} onShowing={onShowing} onPick={onPick} onEscape={clearPicks} drawingRef={artifactDrawing} drawingAttached={artifactInk.attached} onDrawingChange={artifactInk.onChange} />
+              <ArtifactsPane label={LABEL} switcher={switcher} previewId={previewId} onPreview={(id) => (id ? previewArtifact(id) : setPreviewId(null))} onPublished={onPublished} onBuildPlan={sendForHer} onShowing={onShowing} onPick={onPick} onEscape={clearPicks} drawingRef={artifactDrawing} drawingAttached={artifactInk.attached} onDrawingChange={artifactInk.onChange} />
             </div>
             <div className={source === 'draw' ? 'h-full' : 'hidden'}>
               <DrawPane ref={drawing} active={source === 'draw'} switcher={switcher} attached={ink.attached} onChange={ink.onChange} />

@@ -210,7 +210,7 @@ export const getArtifacts = async (): Promise<ArtifactsView | null> => {
 }
 
 /** Where an artifact lives and whether a local copy exists, from the registry; null when none recorded it. */
-export const getArtifact = async (id: string): Promise<{ id: string; url: string; worktree: string; name: string; versions: number; history: { version: number; ts: string; local: boolean }[]; local: boolean; filePath: string | null; notes?: ArtifactNote[] } | null> => {
+export const getArtifact = async (id: string): Promise<{ id: string; url: string; worktree: string; name: string; versions: number; history: { version: number; ts: string; local: boolean }[]; local: boolean; filePath: string | null; notes?: ArtifactNote[]; plan?: string | null; page?: string | null } | null> => {
   try {
     const res = await fetch(API + '/artifact/' + encodeURIComponent(id))
     return res.ok ? await res.json() : null

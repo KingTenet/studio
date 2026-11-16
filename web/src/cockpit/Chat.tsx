@@ -410,9 +410,14 @@ type ChatProps = {
   onSent?: () => void
   /** The box keeps the keyboard (the cockpit): it takes focus back when asked (FOCUS_CHAT_EVENT), and typing with nothing editable focused goes to it. */
   stickyFocus?: boolean
+  /**
+   * A message the cockpit sends for her (a plan's [Build this]), with a new id each time: sent as if she had typed it, without
+   * asking for a feature name, since its feature has been started.
+   */
+  outbox?: { id: number; text: string } | null
 }
 
-export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, onTogglePin, pinShortcut, overlay = false, onToggleOverlay, onExpand, onClose, focusMessage, pageContext, attachments = [], onRemoveAttachment, onSent, stickyFocus = false }: ChatProps) => {
+export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, onTogglePin, pinShortcut, overlay = false, onToggleOverlay, onExpand, onClose, focusMessage, pageContext, attachments = [], onRemoveAttachment, onSent, stickyFocus = false, outbox = null }: ChatProps) => {
   const tip = useTip()
   const { perform, isBusy, pendingOf } = useControls()
   const [view, setView] = useSharedPref<ChatView>('wt:chatView', 'chat')
@@ -622,11 +627,21 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
     return () => clearTimeout(timer)
   }, [session.input])
 
+  // With no session in the chat: Start Claude, and dictating starts it too, with what was said as its first prompt.
+  const newStart = agent || stopped || placeholder ? undefined : sessionControls(w, isBusy(label, w)).find((model): model is StartModel => model.kind === 'start' && model.key === 'claude')
+  const canStartNew = Boolean(newStart && !newStart.disabled && !startingNew)
+
   const sendable = (message: string) => Boolean(message.trim() && !uploading && (bringing ? !queued : agent ? !stuckInput && !blocked : resumeChip && !resumeChip.disabled))
   const canSend = sendable(text)
-  // Sends the box, or what was dictated with Space.
-  const send = async (typed = text) => {
-    if (!sendable(typed)) return
+  // Sends the box, or what was dictated with Space; `named` for the outbox's message, whose feature is already started.
+  const send = async (typed = text, named = false) => {
+    if (!sendable(typed)) {
+      if (!named) return
+      // With no session, a new one starts with it as its first prompt; one that can't take it now (a question waiting) leaves it in the box.
+      if (newStart?.onClick.type === 'run' && canStartNew) perform(label, { ...newStart.onClick, extra: { message: withDropped(typed.trim()) } }, newStart.key)
+      else setText(typed)
+      return
+    }
     const message = typed.trim()
     follow()
     if (bringing) {
@@ -642,7 +657,7 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
       return
     }
     if (!agent) return
-    if (w?.feature === null && w.mode === 'build') {
+    if (w?.feature === null && w.mode === 'build' && !named) {
       setText(message)
       setNaming(message)
       return
@@ -657,6 +672,13 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
     setText('')
     void deliver(agent.paneId, message)
   }
+  // The outbox's message is sent once, when its id is new.
+  const sentOutbox = useRef(outbox?.id ?? 0)
+  useEffect(() => {
+    if (!outbox || outbox.id === sentOutbox.current) return
+    sentOutbox.current = outbox.id
+    void send(outbox.text, true)
+  })
   // Arrived once the transcript has more messages than when it was sent, or (as a long transcript re-read keeps only its
   // last 200, which can be fewer than that) once it shows this message.
   const arrived = (pending: { text: string; count: number }) =>
@@ -678,10 +700,6 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
       <div className="rounded-lg bg-sky-50 px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] dark:bg-sky-950/60">{queued.text}</div>
     </div>
   )
-
-  // With no session in the chat: Start Claude, and dictating starts it too, with what was said as its first prompt.
-  const newStart = agent || stopped || placeholder ? undefined : sessionControls(w, isBusy(label, w)).find((model): model is StartModel => model.kind === 'start' && model.key === 'claude')
-  const canStartNew = Boolean(newStart && !newStart.disabled && !startingNew)
 
   let body: ReactNode
   if (placeholder) {

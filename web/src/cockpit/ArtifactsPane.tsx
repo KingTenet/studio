@@ -12,6 +12,7 @@ import { ago, plural } from '@/lib/format'
 import { pendingFor } from '@/lib/pending'
 import type { ArtifactInfo, ArtifactNote, ArtifactsView } from '@/lib/types'
 import { cn } from 'cn'
+import { BuildThis } from './BuildThis'
 import { DrawPane, type DrawingHandle } from './DrawPane'
 
 // What a sandboxed artifact may do: run its scripts and open links, but as an opaque origin, never as the cockpit.
@@ -84,6 +85,10 @@ type ArtifactsPaneProps = {
   previewId: string | null
   /** Previews an artifact (any id), or goes back with null. */
   onPreview: (id: string | null) => void
+  /** A publish seen after the first load: a new artifact, or a new version of one. */
+  onPublished: (artifact: ArtifactInfo) => void
+  /** A plan's [Build this] has started its feature and switched to Build: the chat sends Claude this. */
+  onBuildPlan: (message: string) => void
   /** Told what the pane shows whenever that changes, for the chat to pass on with each message. */
   onShowing: (text: string) => void
   /** An element clicked in the shown artifact with the pick tool. */
@@ -101,7 +106,7 @@ type ArtifactsPaneProps = {
 export type ArtifactDrawingHandle = { toPng: () => Promise<{ png: Blob; shot: boolean } | null> }
 
 type Version = { version: number; ts: string; local: boolean }
-type PreviewInfo = { id: string; name: string; url: string; local: boolean; filePath: string | null; history: Version[]; notes: ArtifactNote[] }
+type PreviewInfo = { id: string; name: string; url: string; local: boolean; filePath: string | null; history: Version[]; notes: ArtifactNote[]; plan: string | null; page: string | null }
 
 /** What the shown version's page found changed since an earlier one (studio-diff-result). */
 type DiffResult = { against: number; added: number; changed: number; removed: number; error?: boolean }
@@ -168,7 +173,7 @@ const VersionsOverlay = ({ history, shown, latest, onShow, previous, diffing, on
 }
 
 /** The app's artifact index (Claude-written, sandboxed), or every recorded artifact as cards; with the buttons that rebuild or consolidate it. */
-export const ArtifactsPane = ({ label, switcher, previewId, onPreview, onShowing, onPick, onEscape, drawingRef, drawingAttached, onDrawingChange }: ArtifactsPaneProps) => {
+export const ArtifactsPane = ({ label, switcher, previewId, onPreview, onPublished, onBuildPlan, onShowing, onPick, onEscape, drawingRef, drawingAttached, onDrawingChange }: ArtifactsPaneProps) => {
   const tip = useTip()
   const { perform, isBusy, state, confirm, act, pendingOf, failedOf } = useControls()
   // undefined until the first answer; null when the studio server couldn't list them (it may predate this page).
@@ -182,9 +187,9 @@ export const ArtifactsPane = ({ label, switcher, previewId, onPreview, onShowing
   const running = Boolean(artifactsTab && w?.agents?.some((agent) => agent.tabId === artifactsTab.tabId))
   const working = w?.tabs?.artifacts?.state === 'claude-working' || w?.tabs?.artifacts?.state === 'running'
 
-  // A publish seen after the first load (a new artifact, or a new version of one) is previewed, so its local copy takes focus.
-  const onPreviewRef = useRef(onPreview)
-  onPreviewRef.current = onPreview
+  // A publish seen after the first load (a new artifact, or a new version of one) is passed on, for the cockpit to preview.
+  const onPublishedRef = useRef(onPublished)
+  onPublishedRef.current = onPublished
   useEffect(() => {
     let seen: Map<string, string> | null = null
     const load = async () => {
@@ -192,7 +197,7 @@ export const ArtifactsPane = ({ label, switcher, previewId, onPreview, onShowing
       setData(next)
       if (!next) return
       const published = next.artifacts.filter((a) => seen?.get(a.id) !== a.latest.ts)
-      if (seen && published.length) onPreviewRef.current(published.reduce((a, b) => (b.latest.ts > a.latest.ts ? b : a)).id)
+      if (seen && published.length) onPublishedRef.current(published.reduce((a, b) => (b.latest.ts > a.latest.ts ? b : a)))
       seen = new Map(next.artifacts.map((a) => [a.id, a.latest.ts]))
     }
     void load()
@@ -218,7 +223,7 @@ export const ArtifactsPane = ({ label, switcher, previewId, onPreview, onShowing
     previewScroll.current = 0
     if (!previewId) return setPreview(null)
     let current = true
-    setPreview({ id: previewId, name: previewId, url: 'https://claude.ai/artifact/' + previewId, local: true, filePath: null, history: [], notes: [] })
+    setPreview({ id: previewId, name: previewId, url: 'https://claude.ai/artifact/' + previewId, local: true, filePath: null, history: [], notes: [], plan: null, page: null })
     // Asked again every second, for new versions.
     const load = () =>
       void getArtifact(previewId).then(
@@ -226,8 +231,8 @@ export const ArtifactsPane = ({ label, switcher, previewId, onPreview, onShowing
           current &&
           setPreview(
             found
-              ? { id: found.id, name: found.name, url: found.url, local: found.local, filePath: found.filePath ?? null, history: found.history ?? [], notes: found.notes ?? [] }
-              : { id: previewId, name: previewId, url: 'https://claude.ai/artifact/' + previewId, local: false, filePath: null, history: [], notes: [] }
+              ? { id: found.id, name: found.name, url: found.url, local: found.local, filePath: found.filePath ?? null, history: found.history ?? [], notes: found.notes ?? [], plan: found.plan ?? null, page: found.page ?? null }
+              : { id: previewId, name: previewId, url: 'https://claude.ai/artifact/' + previewId, local: false, filePath: null, history: [], notes: [], plan: null, page: null }
           )
       )
     load()
@@ -482,6 +487,7 @@ export const ArtifactsPane = ({ label, switcher, previewId, onPreview, onShowing
               <ArrowLeft /> back
             </Button>
             <span className="min-w-16 flex-1 basis-0 truncate text-xs font-medium">{preview.name}</span>
+            {preview.plan && <BuildThis key={preview.id} plan={{ name: preview.plan, title: preview.name, url: preview.url, page: preview.page }} onSend={onBuildPlan} />}
             <Button size="sm" variant="ghost" asChild>
               <a href={preview.url} target="_blank" rel="noopener" title={tip('The published artifact on claude.ai')}>
                 claude.ai

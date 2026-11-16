@@ -7,7 +7,8 @@
  *
  * Every worktree has a folder under STUDIO_ARTIFACTS_DIR (default ~/.studio/artifacts),
  * named after its path the way Claude Code names project folders:
- *   registry.jsonl         one line per publish: session, title, url, description, version, snapshot
+ *   registry.jsonl         one line per publish: session, title, url, description, version, snapshot, and the feature
+ *                          name when the page is a plan (planName)
  *   snapshots/<id>/v<n>/   that version's page (as index.html) and its supporting files
  *   relations.json         { superseded: { <id>: <id of what replaced it> }, removed: { <id>: <when> } },
  *                          written by consolidation and the cockpit's remove button
@@ -85,6 +86,17 @@ const pageTitle = (html) => {
   return match ? match[1].replace(/\s+/g, ' ').trim() || null : null;
 };
 
+/**
+ * The feature a plan page is for, from its `<meta name="studio-plan" content="…">` (the Plan mode rules ask Claude for one, in
+ * feature.js): a short name on one line, else null for a page that isn't a plan.
+ */
+const planName = (html) => {
+  const tag = /<meta\b[^>]*\bname\s*=\s*["']studio-plan["'][^>]*>/i.exec(html ?? '')?.[0];
+  const content = tag && /\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(tag);
+  const name = content ? (content[1] ?? content[2]).replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim() : '';
+  return name ? name.slice(0, 80) : null;
+};
+
 const isPublish = (input) => Boolean(input?.file_path) && (input.action === undefined || input.action === 'publish') && !input.asset && !input.type_url;
 
 // A `files` source may be a path, { from }, an artifact copy ({ artifact, path }) or null (a removal).
@@ -147,6 +159,7 @@ const record = ({ sessionId, toolUseId = null, cwd, ts = new Date().toISOString(
     url,
     version,
     title: pageTitle(html) ?? input.title ?? null,
+    plan: planName(html),
     description: input.description ?? null,
     filePath: page,
     snapshot: files.includes('index.html') ? snapshotDir : null,
@@ -280,6 +293,8 @@ const locate = (id) => {
     history: versions.map((entry) => ({ version: entry.version, ts: entry.ts, snapshot: entry.snapshot ? path.join(found.folder, entry.snapshot) : null })),
     // The page as its session wrote it, where an edit goes (the snapshot is a copy).
     filePath: found.entry.filePath ?? null,
+    // The feature its latest local copy is a plan for (planName), or null when that isn't a plan.
+    plan: latest?.plan ?? null,
     notes: readJson(path.join(found.folder, 'notes.json'), {})[id] ?? [],
   };
 };
@@ -385,4 +400,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { addNote, backfill, describe, folderFor, locate, markBuilt, pageTitle, publishesIn, readRegistry, record, remove, removeNote, supersede, worktreeOf };
+module.exports = { addNote, backfill, describe, folderFor, locate, markBuilt, pageTitle, planName, publishesIn, readRegistry, record, remove, removeNote, supersede, worktreeOf };
