@@ -29,7 +29,7 @@ This updates Studio, starts its herdr workspace (Claude, the cockpit's server, t
 - `web/`: the cockpit page (React, built into a single `web/dist/cockpit.html`).
 - `hooks/studio-hook.py`: Claude Code hooks that tell the cockpit which session a pane runs and pass on what the page showed.
 - `claude/settings.json`: the settings Claude runs with inside the studio (`claude --settings`).
-- `skills/`: the skills Claude has here: artifact-index, debrief, diagnose, grill-me, handoff, prototype, tdd, worktree-summary.
+- `skills/`: the skills Claude has here: artifact-index, debrief, diagnose, grill-me, handoff, look (a screenshot of a page of the app, by `scripts/look.sh`), prototype, seed-data (runs the app's `scripts/seed-data.ts`), tdd, worktree-summary. Claude loads them with this folder as a plugin (`claude --plugin-dir`, named in `.claude-plugin/plugin.json`), so each can also be called as `/studio:<name>`.
 
 ## Develop
 

@@ -4,8 +4,8 @@
 # workspace, or completes it if it's already there, and opens the cockpit at http://localhost:4000.
 #
 # The workspace has a tab for each of these:
-#   claude   Claude working on the app, in auto mode with claude/settings.json (its hooks and allowlist),
-#            continuing the app's last conversation if it has one
+#   claude   Claude working on the app, in auto mode with claude/settings.json (its hooks and allowlist) and
+#            this folder as a plugin (its skills/), continuing the app's last conversation if it has one
 #   studio   the cockpit's server (scripts/lib/studio-server.js)
 #   app      the app's dev server (npm run dev, on the app's port, 4001)
 #   whisper  whisper-server, which turns the cockpit's dictation into text (on 127.0.0.1:8178)
@@ -54,7 +54,7 @@ fi
 # Claude's transcripts live in a folder named after the app's path; one there means a conversation to continue.
 has_conversation() { compgen -G "$HOME/.claude/projects/$(printf %s "$APP_DIR" | sed 's/[^A-Za-z0-9]/-/g')/*.jsonl" >/dev/null; }
 
-CLAUDE="claude --permission-mode auto --settings $(q "$STUDIO_DIR/claude/settings.json")"
+CLAUDE="claude --permission-mode auto --settings $(q "$STUDIO_DIR/claude/settings.json") --plugin-dir $(q "$STUDIO_DIR")"
 has_conversation && CLAUDE="$CLAUDE --continue"
 CLAUDE="${STUDIO_CLAUDE_CMD:-$CLAUDE}"
 

@@ -9,6 +9,8 @@
 set -euo pipefail
 
 SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
+STUDIO_DIR="$(dirname "$SCRIPTS")"
+STUDIO_HOME="${STUDIO_HOME:-$HOME/.studio}"
 MODE=""
 if [ "${1:-}" = "--consolidate" ]; then
   MODE=" consolidate"
@@ -31,5 +33,9 @@ if [ -n "$existing" ]; then
 else
   pane=$(herdr tab create --workspace "$ws" --cwd "$TARGET" --label "$LABEL" | jq -r '.result.root_pane.pane_id')
 fi
-herdr pane run "$pane" "claude --permission-mode auto '/artifact-index$MODE'"
+q() { printf %q "$1"; }
+# As bin/studio starts Claude (the studio's hooks, allowlist and skills), with the hooks' variables on the command line,
+# since a pane takes its environment from herdr. The skill is named with its plugin, studio:, so a personal skill of the
+# same name can't stand in for it.
+herdr pane run "$pane" "STUDIO_DIR=$(q "$STUDIO_DIR") STUDIO_HOME=$(q "$STUDIO_HOME") claude --permission-mode auto --settings $(q "$STUDIO_DIR/claude/settings.json") --plugin-dir $(q "$STUDIO_DIR") '/studio:artifact-index$MODE'"
 echo "✅ Claude is ${MODE:+consolidating and }rebuilding the artifact index in the $LABEL tab ($pane)"

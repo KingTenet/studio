@@ -110,19 +110,19 @@ const shellQuote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
 /** The folder this harness lives in, which Claude's hooks find their scripts through ($STUDIO_DIR). */
 const STUDIO_DIR = path.resolve(__dirname, '..', '..');
 
-/** How Claude starts in the studio: in auto mode, with the studio's settings (hooks and the allowlist). Kept in step with bin/studio. */
-const claudeCommand = () => `claude --permission-mode auto --settings ${shellQuote(path.join(STUDIO_DIR, 'claude', 'settings.json'))}`;
+/** How Claude starts in the studio: in auto mode, with the studio's settings (hooks and the allowlist) and its skills (this harness as a plugin). Kept in step with bin/studio. */
+const claudeCommand = () => `claude --permission-mode auto --settings ${shellQuote(path.join(STUDIO_DIR, 'claude', 'settings.json'))} --plugin-dir ${shellQuote(STUDIO_DIR)}`;
 
 /**
- * The command to bring a session back, keeping its permission mode and settings file, from its directory. A session
+ * The command to bring a session back, keeping its permission mode, settings file and plugin folder (Claude doesn't restore them), from its directory. A session
  * that never got a message has nothing saved to resume, so it gets a fresh `claude` instead.
  */
 const resumeCommand = ({ argv, sessionId, cwd, shellCwd, saved = true }) => {
   const flag = (name) => {
     const at = argv.indexOf(name);
-    return at >= 0 && argv[at + 1] ? ` ${name} ${name === '--settings' ? shellQuote(argv[at + 1]) : argv[at + 1]}` : '';
+    return at >= 0 && argv[at + 1] ? ` ${name} ${name === '--permission-mode' ? argv[at + 1] : shellQuote(argv[at + 1])}` : '';
   };
-  const flags = flag('--permission-mode') + flag('--settings');
+  const flags = flag('--permission-mode') + flag('--settings') + flag('--plugin-dir');
   const command = saved ? `claude${flags} --resume ${sessionId}` : `claude${flags}`;
   return shellCwd === cwd ? command : `cd ${shellQuote(cwd)} && ${command}`;
 };

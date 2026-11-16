@@ -39,6 +39,7 @@ DIGEST="$FOLDER/summary-digest.md"
 } >"$DIGEST"
 
 # Only Read: the digest holds everything it needs. No transcript of its own, or the next digest would include it.
-summary=$(claude -p "/worktree-summary $DIGEST" --no-session-persistence --allowedTools Read </dev/null)
+# The skill comes from this harness, loaded as the plugin studio.
+summary=$(claude -p "/studio:worktree-summary $DIGEST" --plugin-dir "$(dirname "$SCRIPTS")" --no-session-persistence --allowedTools Read </dev/null)
 printf '%s\n' "$summary" | node "$LIB" write "$TARGET"
 echo "✅ Wrote the summary of $TARGET"

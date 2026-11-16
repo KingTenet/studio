@@ -105,8 +105,13 @@ test('resumeCommand: keeps the studio settings file, so the hooks and allowlist 
   assert.equal(resumeCommand({ argv, sessionId: 'abc', cwd: '/r', shellCwd: '/r' }), "claude --permission-mode auto --settings '/Studio/studio/claude/settings.json' --resume abc");
 });
 
-test('claudeCommand: auto mode with the settings file in this harness', () => {
-  assert.equal(claudeCommand(), `claude --permission-mode auto --settings '${path.resolve(__dirname, '..', '..', 'claude', 'settings.json')}'`);
+test('resumeCommand: keeps the plugin folder, so the studio skills come back with the session', () => {
+  const argv = ['claude', '--permission-mode', 'auto', '--settings', '/S/claude/settings.json', '--plugin-dir', '/S'];
+  assert.equal(resumeCommand({ argv, sessionId: 'abc', cwd: '/r', shellCwd: '/r' }), "claude --permission-mode auto --settings '/S/claude/settings.json' --plugin-dir '/S' --resume abc");
+});
+
+test('claudeCommand: auto mode with the settings file in this harness, and the harness as a plugin for its skills', () => {
+  assert.equal(claudeCommand(), `claude --permission-mode auto --settings '${path.resolve(__dirname, '..', '..', 'claude', 'settings.json')}' --plugin-dir '${path.resolve(__dirname, '..', '..')}'`);
 });
 
 test('resumeCommand: a session with nothing saved starts afresh in the same mode', () => {
