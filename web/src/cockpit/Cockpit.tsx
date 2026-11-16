@@ -14,6 +14,7 @@ import { DrawPane, type DrawingHandle } from './DrawPane'
 import { PaneLayout, type SidePane } from './PaneLayout'
 import { Rail } from './Rail'
 import { useChatSelection, useFollowSessions } from './useChatSelection'
+import { PreviewBanner } from './VersionsPanel'
 
 // The label the cockpit's controls, pending states and saved settings go by: there is only the one app.
 const LABEL = 'app'
@@ -170,7 +171,7 @@ const Layout = ({ selected, setSelected, adopt, focusMessage }: LayoutProps) => 
           <div className="relative h-full">
             {/* All stay mounted so switching to the artifacts and back doesn't reload the app, or lose the drawing. */}
             <div className={source === 'app' ? 'h-full' : 'hidden'}>
-              <AppFrame label={LABEL} appUrl={w?.url ?? 'http://localhost:4001'} running={Boolean(w?.running)} switcher={switcher} />
+              <AppFrame label={LABEL} appUrl={w?.url ?? 'http://localhost:4001'} running={Boolean(w?.running)} switcher={switcher} banner={w && <PreviewBanner w={w} />} />
             </div>
             <div className={source === 'artifacts' ? 'h-full' : 'hidden'}>
               <ArtifactsPane label={LABEL} switcher={switcher} previewId={previewId} onPreview={(id) => (id ? previewArtifact(id) : setPreviewId(null))} onShowing={onShowing} onPick={onPick} onEscape={clearPicks} drawingRef={artifactDrawing} drawingAttached={artifactInk.attached} onDrawingChange={artifactInk.onChange} />

@@ -81,7 +81,7 @@ export const Markdown = ({ text }: { text: string }) => (
 )
 
 // `index` marks one of your messages (data-you) so the transcript can pin it once it scrolls above the top.
-const Message = ({ message, index }: { message: ChatMessage; index?: number }) => {
+export const Message = ({ message, index }: { message: ChatMessage; index?: number }) => {
   const tip = useTip()
   if (message.kind === 'tool') {
     return (

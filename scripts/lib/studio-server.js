@@ -6,6 +6,7 @@
  *
  * The API: /_env/api/state (the app, its Claude pane, the feature being built, its versions and the shared prefs),
  * the feature (feature/start, feature/check, feature/keep, feature/discard, feature/go-back, feature/bring-back),
+ * the versions (version/preview, version/end-preview, version/restore),
  * the chat (session, session/send),
  * artifacts (list, serve, remove, unnote, artifact-shot), Draw and dropped files (drawing, upload),
  * dictation (listener, transcribe, dictation-log, vad/) and jobs (run: start or resume Claude, rebuild the artifact index).
@@ -29,7 +30,7 @@ const path = require('node:path');
 const { COMMAND_SHELL_MARKER, pausedSessions, processTree, readClosed, runningCommands, withRealSessions } = require('./claude-reaper');
 const { describe: describeArtifacts, folderFor: artifactFolder, locate: locateArtifact, remove: removeArtifacts, removeNote: removeArtifactNote } = require('./artifacts');
 const { paneInput, panePrompt, readTranscript, sessionTitle, transcriptPath } = require('./session-view');
-const { bringBack, discard: discardFeature, goBack, keep: keepFeature, nextVersion, pushInBackground, read: readFeature, runGate, start: startFeature, summarise, versions } = require('./feature');
+const { bringBack, discard: discardFeature, endPreview, goBack, keep: keepFeature, nextVersion, preview, pushInBackground, read: readFeature, restore, runGate, start: startFeature, summarise, versions } = require('./feature');
 
 const SCRIPTS = path.resolve(__dirname, '..');
 const WEB_DIST = path.resolve(SCRIPTS, '..', 'web', 'dist');
@@ -1268,6 +1269,51 @@ const bringBackNow = async (req, res) => {
   sendJson(res, 200, brought);
 };
 
+/** Previews an old version ({ tag }) in the app pane: its code checked out, no branch moved, data/ kept to put back. */
+const previewVersionNow = async (req, res) => {
+  const { tag } = JSON.parse(await readBody(req));
+  const appDir = appInfo().dir;
+  if (refuseWhileBusy(res, chatAgent(appDir), 'Preview it')) return;
+  let shown;
+  try {
+    shown = preview(appDir, String(tag ?? ''));
+  } catch (error) {
+    sendJson(res, 409, { error: error.message });
+    return;
+  }
+  sendJson(res, 200, shown);
+};
+
+/** Back to the latest from a preview: the code and data/ exactly as they were before it. */
+const endPreviewNow = async (req, res) => {
+  const appDir = appInfo().dir;
+  if (refuseWhileBusy(res, chatAgent(appDir), 'Go back to the latest')) return;
+  let ended;
+  try {
+    ended = endPreview(appDir);
+  } catch (error) {
+    sendJson(res, 409, { error: error.message });
+    return;
+  }
+  sendJson(res, 200, ended);
+};
+
+/** Restores an old version ({ tag }) as the next one: a new commit on main with its code, tagged; main, its tags and develop are pushed. */
+const restoreVersionNow = async (req, res) => {
+  const { tag } = JSON.parse(await readBody(req));
+  const appDir = appInfo().dir;
+  if (refuseWhileBusy(res, chatAgent(appDir), 'Restore it')) return;
+  let restored;
+  try {
+    restored = restore(appDir, String(tag ?? ''));
+  } catch (error) {
+    sendJson(res, 409, { error: error.message });
+    return;
+  }
+  pushInBackground(appDir, ['main']);
+  sendJson(res, 200, restored);
+};
+
 // --- the cockpit page and the API --------------------------------------------------------
 
 const cockpitPage = () => {
@@ -1516,7 +1562,7 @@ const handle = async (req, res) => {
     await startFeatureNow(req, res);
     return;
   }
-  const featureAction = { '/_env/api/feature/check': checkFeatureNow, '/_env/api/feature/keep': keepFeatureNow, '/_env/api/feature/discard': discardFeatureNow, '/_env/api/feature/go-back': goBackNow, '/_env/api/feature/bring-back': bringBackNow }[url.pathname];
+  const featureAction = { '/_env/api/feature/check': checkFeatureNow, '/_env/api/feature/keep': keepFeatureNow, '/_env/api/feature/discard': discardFeatureNow, '/_env/api/feature/go-back': goBackNow, '/_env/api/feature/bring-back': bringBackNow, '/_env/api/version/preview': previewVersionNow, '/_env/api/version/end-preview': endPreviewNow, '/_env/api/version/restore': restoreVersionNow }[url.pathname];
   if (req.method === 'POST' && featureAction) {
     if (needsJobHeader(req, res)) return;
     await featureAction(req, res);

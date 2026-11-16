@@ -26,6 +26,8 @@ type AppFrameProps = {
   running: boolean
   /** The App | Artifacts switch, shown at the start of the toolbar. */
   switcher?: ReactNode
+  /** Shown under the toolbar, e.g. while an old version is previewed. */
+  banner?: ReactNode
 }
 
 // about:blank (the frame before it navigates) has pathname "blank", which as a src resolves to /_env/blank.
@@ -44,7 +46,7 @@ const framePath = (frame: HTMLIFrameElement | null) => {
 }
 
 /** The app in a frame at a chosen viewport, scaled to fit the column or to a fixed zoom. */
-export const AppFrame = ({ label, appUrl, running, switcher }: AppFrameProps) => {
+export const AppFrame = ({ label, appUrl, running, switcher, banner }: AppFrameProps) => {
   const tip = useTip()
   const [viewport, setViewport] = useState(() => store.get('wt:' + label + ':viewport', '1440x900'))
   const [zoom, setZoom] = useState(() => {
@@ -89,7 +91,7 @@ export const AppFrame = ({ label, appUrl, running, switcher }: AppFrameProps) =>
   const scale = zoom === 'fit' ? Math.min((stageSize.width - 24) / width, (stageSize.height - 24) / height, 1) : parseFloat(zoom) / 100
 
   return (
-    <div className="grid h-full grid-rows-[auto_1fr] bg-muted/50">
+    <div className="grid h-full grid-rows-[auto_auto_1fr] bg-muted/50">
       <div className="flex flex-wrap items-center gap-2 border-b bg-background px-3 py-1.5">
         {switcher}
         <Select
@@ -139,6 +141,7 @@ export const AppFrame = ({ label, appUrl, running, switcher }: AppFrameProps) =>
           open full <ExternalLink />
         </Button>
       </div>
+      <div>{banner}</div>
       <div ref={stage} className="grid min-h-0 min-w-0 items-start justify-items-center-safe overflow-auto p-3">
         {running ? (
           <div className="relative overflow-hidden rounded-md shadow-lg ring-1 ring-border" style={{ width: width * scale, height: height * scale }}>

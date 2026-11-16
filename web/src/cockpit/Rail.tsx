@@ -8,6 +8,7 @@ import { cn } from 'cn'
 import { FeaturePanel } from './FeaturePanel'
 import type { SidePane } from './PaneLayout'
 import { CloseButton, PinButton } from './useAutoHide'
+import { VersionsPanel } from './VersionsPanel'
 
 export const DOT = { ok: 'bg-emerald-600', failed: 'bg-red-600', active: 'bg-amber-500', idle: 'bg-muted-foreground/40' }
 
@@ -71,7 +72,7 @@ export const Rail = ({ w, pane }: RailProps) => {
         <FeaturePanel w={w} />
       </Section>
       <Section icon={<History className="size-3.5" />} title="Versions">
-        <p className="text-sm text-muted-foreground">The versions you keep will be listed here.</p>
+        <VersionsPanel w={w} />
       </Section>
     </div>
   )

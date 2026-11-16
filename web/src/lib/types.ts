@@ -34,8 +34,14 @@ export type Feature = { name: string; startedAt: string; base: string; checkpoin
 /** After going back to a checkpoint, until her next message: the one she went back to and the later checkpoints' labels, which Bring them back restores. */
 export type WentBack = { to: { sha: string; label: string }; discarded: string[] }
 
-/** A version kept: main at its annotated tag `tag` (v1, v2…), named after the feature it added. */
-export type Version = { tag: string; name: string; sha: string; at: string }
+/**
+ * A version kept: main at its annotated tag `tag` (v1, v2…), named after the feature it added (or "restore vN"), with the
+ * Claude sessions it was built in (none for the template's versions or a restore).
+ */
+export type Version = { tag: string; name: string; sha: string; at: string; sessions: string[] }
+
+/** An old version being previewed in the app pane; `packagesDiffer` when it needs other packages than are installed. */
+export type Preview = { tag: string; name: string; at: string; packagesDiffer: boolean }
 
 /** How one of the tests Keep is gated on went (`npm test`, `npm run typecheck`): the last of its output. */
 export type GateResult = { name: string; ok: boolean; output: string }
@@ -65,6 +71,8 @@ export type App = {
   wentBack: WentBack | null
   /** The versions kept so far, oldest first. */
   versions: Version[]
+  /** The old version being previewed, or null when the app is at the latest. */
+  preview: Preview | null
 }
 
 export type ControlState = {

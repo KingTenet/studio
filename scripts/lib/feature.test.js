@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { bringBack, discard, goBack, keep, lastReply, nameFromPrompt, read, runGate, stateDir, summarise, turnLabel, versions } = require('./feature');
+const { bringBack, discard, endPreview, goBack, keep, lastReply, nameFromPrompt, preview, read, restore, runGate, stateDir, summarise, turnLabel, versions } = require('./feature');
 
 const SCRIPT = path.join(__dirname, 'feature.js');
 const IDENTITY = { GIT_AUTHOR_NAME: 'Her', GIT_AUTHOR_EMAIL: 'her@example.com', GIT_COMMITTER_NAME: 'Her', GIT_COMMITTER_EMAIL: 'her@example.com' };
@@ -595,6 +595,139 @@ test('A change holding a value from .env is never committed: Claude is told to m
     await until(() => spawnSync('pgrep', ['-f', `push ${t.app}`]).status !== 0);
     const found = spawnSync('grep', ['-rlF', '-e', KEY, '-e', QUOTED, t.home], { encoding: 'utf8' });
     assert.equal(found.status, 1, `found in ${found.stdout}`);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+/** keepSetup, then v2 "dark mode" kept from a turn (in session s1) that changed page.html and package.json and added dark.css. */
+const versionsSetup = () => {
+  const t = keepSetup();
+  t.run(['start', 'dark mode']);
+  t.turn('Make the page dark', () => {
+    fs.writeFileSync(path.join(t.app, 'page.html'), '<h1 class="dark">Getting started</h1>\n');
+    fs.writeFileSync(path.join(t.app, 'dark.css'), 'body { background: black }\n');
+    const pkg = JSON.parse(fs.readFileSync(path.join(t.app, 'package.json'), 'utf8'));
+    fs.writeFileSync(path.join(t.app, 'package.json'), JSON.stringify({ ...pkg, dependencies: { colour: '1.0.0' } }, null, 2) + '\n');
+  }, 'Checkpoint: Made the page dark');
+  keep(t.app, { summary: 'A dark page.', anyway: true });
+  return t;
+};
+
+const refs = (dir) => git(dir, 'for-each-ref', '--format=%(refname) %(objectname)');
+
+test('Preview an old version and back: the code (uncommitted changes too) and data/ are exactly as before; no branch or tag moves; no feature starts meanwhile', async () => {
+  const t = versionsSetup();
+  try {
+    const [v1, v2] = versions(t.app);
+    assert.deepEqual(v2.sessions, ['s1'], 'the Claude session v2 was built in');
+    assert.deepEqual(v1.sessions, [], "the template's versions have none");
+
+    // Things in no version: an edited file, a new file, and data/ changed since.
+    fs.writeFileSync(path.join(t.app, 'page.html'), '<h1 class="dark">Hello</h1>\n');
+    fs.writeFileSync(path.join(t.app, 'notes.txt'), 'mine\n');
+    fs.writeFileSync(path.join(t.app, 'data', 'app.db'), 'rows: 7');
+    const before = { files: allFiles(t.app), status: git(t.app, 'status', '--porcelain'), head: git(t.app, 'rev-parse', 'HEAD'), refs: refs(t.app) };
+
+    const shown = preview(t.app, 'v1');
+    assert.equal(shown.tag, 'v1');
+    assert.equal(shown.name, 'Getting Started');
+    assert.equal(shown.packagesDiffer, true, "v2 changed package.json, so v1's packages differ");
+    assert.equal(git(t.app, 'rev-parse', 'HEAD'), v1.sha);
+    assert.throws(() => git(t.app, 'symbolic-ref', '-q', 'HEAD'), undefined, 'detached: no branch is checked out');
+    assert.equal(git(t.app, 'status', '--porcelain'), '', "exactly v1's code");
+    assert.equal(fs.readFileSync(path.join(t.app, 'page.html'), 'utf8'), '<h1>Getting started</h1>\n');
+    assert.ok(!fs.existsSync(path.join(t.app, 'dark.css')) && !fs.existsSync(path.join(t.app, 'notes.txt')));
+    assert.equal(fs.readFileSync(path.join(t.app, 'data', 'app.db'), 'utf8'), 'rows: 7', "the app's data meanwhile");
+    assert.equal(read(t.app).preview.tag, 'v1');
+    assert.equal(refs(t.app), before.refs, 'no branch or tag moved');
+
+    // No feature starts: not from the cockpit, nor from a prompt, which tells Claude not to change anything.
+    assert.match(t.run(['start', 'oops']).stderr, /previewing v1/);
+    assert.match(t.hook('prompt-submit', { prompt: 'Make it blue' }).stdout, /previewing v1 \("Getting Started"\).*Don't change any files/);
+    assert.equal(read(t.app).feature, null);
+    // A turn that changes files anyway makes no checkpoint, and what it changed goes at the end of the preview.
+    t.turn('Make it blue', () => fs.writeFileSync(path.join(t.app, 'page.html'), 'blue'), 'Checkpoint: Blue');
+    assert.equal(read(t.app).feature, null);
+    fs.writeFileSync(path.join(t.app, 'data', 'app.db'), 'rows: 8 (used while previewing)');
+
+    // Another version on top, then back to the latest: everything as before the first.
+    assert.equal(preview(t.app, 'v2').packagesDiffer, false);
+    assert.equal(git(t.app, 'rev-parse', 'HEAD'), v2.sha);
+    assert.deepEqual(endPreview(t.app), { tag: 'v2' });
+    assert.equal(git(t.app, 'symbolic-ref', '--short', 'HEAD'), 'develop');
+    assert.equal(git(t.app, 'rev-parse', 'HEAD'), before.head);
+    assert.equal(git(t.app, 'status', '--porcelain'), before.status, 'uncommitted changes show as uncommitted again');
+    assert.deepEqual(allFiles(t.app), before.files, 'every file, code and data/, as it was');
+    assert.equal(refs(t.app), before.refs);
+    assert.equal(read(t.app).preview, null);
+    assert.ok(!fs.existsSync(path.join(stateDir(t.app), 'snapshots', 'preview')));
+    assert.throws(() => endPreview(t.app), /aren't previewing/);
+    assert.equal(t.hook('prompt-submit', { prompt: 'hello' }).stdout.includes('previewing'), false);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test('Restore: a new commit on main with the old version’s code, tagged as the next version, with a FEATURES.md entry; no version is rewritten; data/ stays; pushed', async () => {
+  const t = versionsSetup();
+  try {
+    const [v1, v2] = versions(t.app);
+    const tags = { v1: tagObject(t.app, 'v1'), v2: tagObject(t.app, 'v2') };
+    fs.writeFileSync(path.join(t.app, 'data', 'app.db'), 'rows: 9');
+    // Restoring from a preview ends it first.
+    preview(t.app, 'v1');
+
+    const restored = restore(t.app, 'v1');
+    assert.equal(restored.version, 'v3');
+    assert.equal(restored.restored, 'v1');
+    const v3 = assertFastForward(t.app, v2.sha);
+    assert.equal(restored.sha, v3);
+    assert.equal(read(t.app).preview, null);
+    assert.equal(git(t.app, 'cat-file', '-p', 'v3').split('\n\n')[1].trim(), 'v3 restore v1');
+    assert.equal(git(t.app, 'log', '-1', '--format=%s', 'main'), 'Restore v1');
+    assert.equal(git(t.app, 'diff', '--stat', v1.sha, v3, '--', '.', ':(exclude)FEATURES.md'), '', "v1's code exactly");
+    assert.deepEqual(entries(t.app), ['## v1 Getting Started', '## v2 dark mode', '## v3 restore v1']);
+    assert.match(git(t.app, 'show', 'main:FEATURES.md'), /## v3 restore v1\n\nBrought back v1 \("Getting Started"\): the app's code is as it was then, and its data as it is now\.$/);
+    assert.deepEqual(tags, { v1: tagObject(t.app, 'v1'), v2: tagObject(t.app, 'v2') }, 'no tag rewritten');
+    assert.deepEqual(versions(t.app).map(({ tag, name, sessions }) => [tag, name, sessions.length]), [['v1', 'Getting Started', 0], ['v2', 'dark mode', 1], ['v3', 'restore v1', 0]]);
+    assert.equal(git(t.app, 'symbolic-ref', '--short', 'HEAD'), 'develop');
+    assert.equal(git(t.app, 'rev-parse', 'develop'), v3);
+    assert.equal(git(t.app, 'status', '--porcelain'), '');
+    assert.ok(!fs.existsSync(path.join(t.app, 'dark.css')));
+    assert.equal(fs.readFileSync(path.join(t.app, 'data', 'app.db'), 'utf8'), 'rows: 9', 'the data stays as it is');
+
+    // Nothing to restore when the code is that version's already; restoring v2 is v4.
+    assert.throws(() => restore(t.app, 'v1'), /already as it was in v1/);
+    assert.throws(() => restore(t.app, 'v9'), /there is no version v9/);
+    assert.equal(restore(t.app, 'v2').version, 'v4');
+    assertFastForward(t.app, v3);
+    assert.equal(fs.readFileSync(path.join(t.app, 'dark.css'), 'utf8'), 'body { background: black }\n');
+
+    // Changes in no version aren't thrown away by a restore.
+    fs.writeFileSync(path.join(t.app, 'page.html'), 'mine');
+    assert.throws(() => restore(t.app, 'v1'), /changes that are in no version/);
+    git(t.app, 'checkout', '--', 'page.html');
+
+    const pushed = t.run(['push', t.app, 'main']);
+    assert.deepEqual(JSON.parse(pushed.stdout), { pushed: ['develop', 'main'], failed: [] }, pushed.stderr);
+    for (const tag of ['v1', 'v2', 'v3', 'v4']) assert.equal(tagObject(t.origin, tag), tagObject(t.app, tag));
+    assert.equal(remoteSha(t.origin, 'main'), git(t.app, 'rev-parse', 'main'));
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test('Preview and Restore are refused while a feature is open, and change nothing', async () => {
+  const t = versionsSetup();
+  try {
+    t.run(['start', 'search box']);
+    t.turn('Add search', () => fs.writeFileSync(path.join(t.app, 'search.js'), 'x\n'), 'Checkpoint: Added search');
+    const before = { files: allFiles(t.app), refs: refs(t.app) };
+    assert.throws(() => preview(t.app, 'v1'), /"search box" is being built\. Keep it or discard it before you preview a version\./);
+    assert.throws(() => restore(t.app, 'v1'), /"search box" is being built\. Keep it or discard it before you restore a version\./);
+    assert.deepEqual({ files: allFiles(t.app), refs: refs(t.app) }, before);
+    assert.equal(read(t.app).preview, null);
   } finally {
     await t.cleanup();
   }

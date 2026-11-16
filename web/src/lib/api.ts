@@ -1,4 +1,4 @@
-import type { ArtifactNote, ArtifactsView, ControlState, FeatureCheck, SessionView, WentBack } from './types'
+import type { ArtifactNote, ArtifactsView, ControlState, FeatureCheck, Preview, SessionView, WentBack } from './types'
 
 const API = '/_env/api'
 const HEADERS = { 'Content-Type': 'application/json', 'X-Studio': '1' }
@@ -85,6 +85,12 @@ export const discardFeature = () => featureAction<{ name: string; checkpoints: n
 export const goBackTo = (sha: string) => featureAction<WentBack>('/feature/go-back', { sha }, 'The app could not go back to that checkpoint.')
 /** Brings back the checkpoints going back dropped, and the code and data as they were. */
 export const bringBack = () => featureAction<{ checkpoints: number }>('/feature/bring-back', {}, 'They could not be brought back.')
+/** Previews an old version in the app pane: its code, with the data as it is (put back on the way out). */
+export const previewVersion = (tag: string) => featureAction<Preview>('/version/preview', { tag }, 'That version could not be previewed.')
+/** Back to the latest version from a preview: the code and data exactly as they were. */
+export const endPreview = () => featureAction<{ tag: string }>('/version/end-preview', {}, 'The app could not go back to the latest version.')
+/** Restores an old version as a new one: its code, on top of the latest, tagged as the next version. */
+export const restoreVersion = (tag: string) => featureAction<{ version: string; sha: string; restored: string }>('/version/restore', { tag }, 'That version could not be restored.')
 export const setTooltips = (tooltips: boolean) => post('/prefs', { tooltips })
 /** Saves one UI setting every page shares (useSharedPref). */
 export const setUiPref = (key: string, value: unknown) => post('/prefs', { ui: { [key]: value } })

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { blockedTitle, latestSessionPane, sessionControls, tabLook } from './controls'
 import type { Agent, App } from './types'
 
-const app = (fields: Partial<App> = {}): App => ({ dir: '/code/app', name: 'app', url: 'http://localhost:4001', running: false, busy: false, tabs: {}, agents: [], paused: [], feature: null, unpushed: [], wentBack: null, versions: [], ...fields })
+const app = (fields: Partial<App> = {}): App => ({ dir: '/code/app', name: 'app', url: 'http://localhost:4001', running: false, busy: false, tabs: {}, agents: [], paused: [], feature: null, unpushed: [], wentBack: null, versions: [], preview: null, ...fields })
 
 const agent = (fields: Partial<Agent> = {}): Agent => ({ paneId: 'w1:p1', tabId: 'w1:t1', tab: '1', status: 'idle', commands: [], sessionId: 'abcdef1234', title: null, ...fields })
 

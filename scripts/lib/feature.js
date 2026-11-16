@@ -22,6 +22,9 @@
  *   went-back.json    after going back to a checkpoint, until her next message: { to: { sha, label }, head, tree,
  *                     checkpoints, at }, what develop, the files (tree, uncommitted ones too) and the checkpoints were
  *                     before, so Bring them back can restore them; data/ as it was is in snapshots/went-back/
+ *   preview.json      while she previews an old version: { tag, sha, branch, tree, at, packagesDiffer }, the version shown and the
+ *                     branch and files (tree, uncommitted ones too) to go back to; data/ as it was is in snapshots/preview/
+ *   versions.json     { <tag>: { sessions: [session id] } }: the Claude sessions each kept version was built in, oldest first
  *
  * Keeping a feature squashes its checkpoints into one commit on main named after it (main only ever fast-forwards),
  * with its summary added to the app's FEATURES.md, tags it v(N+1) and leaves develop equal to main. Discarding it
@@ -29,6 +32,9 @@
  *
  * Going back to a checkpoint resets develop and data/ to it and drops the later checkpoints; Bring them back undoes that
  * exactly, until her next message, which lets them go for good and tells Claude she went back.
+ *
+ * With no feature open she can preview an old version (its code checked out, detached, so no branch moves; data/ put back
+ * on the way out) or restore one: a new commit on main with that version's code, tagged as the next version.
  *
  * Usage: node lib/feature.js prompt-submit         UserPromptSubmit hook: notes the prompt; starts a feature if none is open;
  *                                                  lets go of what going back left, telling Claude
@@ -72,7 +78,7 @@ const configuredApp = () => path.resolve(readJson(path.join(studioHome(), 'confi
 const stateDir = (appDir) => path.join(studioHome(), 'features', path.resolve(appDir).replace(/[^A-Za-z0-9]/g, '-'));
 const files = (appDir) => {
   const dir = stateDir(appDir);
-  return { dir, feature: path.join(dir, 'feature.json'), turn: path.join(dir, 'turn.json'), push: path.join(dir, 'push.json'), snapshots: path.join(dir, 'snapshots'), gate: path.join(dir, 'gate.json'), digest: path.join(dir, 'summary-digest.md'), wentBack: path.join(dir, 'went-back.json') };
+  return { dir, feature: path.join(dir, 'feature.json'), turn: path.join(dir, 'turn.json'), push: path.join(dir, 'push.json'), snapshots: path.join(dir, 'snapshots'), gate: path.join(dir, 'gate.json'), digest: path.join(dir, 'summary-digest.md'), wentBack: path.join(dir, 'went-back.json'), preview: path.join(dir, 'preview.json'), versions: path.join(dir, 'versions.json') };
 };
 
 const git = (appDir, ...args) => execFileSync('git', ['-C', appDir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }).trim();
@@ -116,14 +122,18 @@ const wentBackView = (wentBack) => {
   return { to: wentBack.to, discarded: wentBack.checkpoints.slice(at + 1).map((checkpoint) => checkpoint.label) };
 };
 
+/** The version she is previewing, for the cockpit: { tag, name, at, packagesDiffer }, or null. */
+const previewView = (preview) => (preview ? { tag: preview.tag, name: preview.name, at: preview.at, packagesDiffer: preview.packagesDiffer } : null);
+
 /**
- * The open feature ({ name, startedAt, base, checkpoints }) or null, the branches whose push failed, and what going back to a
- * checkpoint left to bring back (wentBackView), or null.
+ * The open feature ({ name, startedAt, base, checkpoints, sessions }) or null, the branches whose push failed, what going back
+ * to a checkpoint left to bring back (wentBackView) or null, and the version being previewed (previewView) or null.
  */
 const read = (appDir) => ({
   feature: readJson(files(appDir).feature, null),
   unpushed: Object.keys(readJson(files(appDir).push, {}).pending ?? {}),
   wentBack: wentBackView(readJson(files(appDir).wentBack, null)),
+  preview: previewView(readJson(files(appDir).preview, null)),
 });
 
 /** Copies the app's data/ (without logs/) to the snapshot for a commit; an app with no data/ gets an empty one. */
@@ -157,8 +167,9 @@ const start = (appDir, name, now = new Date()) => {
   const clean = String(name ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
   if (!clean) throw new Error('a feature needs a name');
   return withLock(appDir, () => {
-    const open = read(appDir).feature;
+    const { feature: open, preview } = read(appDir);
     if (open) throw new Error(`"${open.name}" is still being built: keep it or discard it first`);
+    if (preview) throw new Error(`You're previewing ${preview.tag}. Go back to the latest version before starting a feature.`);
     const base = git(appDir, 'rev-parse', 'main');
     git(appDir, 'checkout', '-q', '-B', 'develop', 'main');
     fs.rmSync(files(appDir).snapshots, { recursive: true, force: true });
@@ -225,11 +236,12 @@ const leakMessage = (leaks) => {
 };
 
 /**
- * Commits what the turn changed as a checkpoint on develop, snapshots data/ for it and adds it to the feature.
+ * Commits what the turn changed as a checkpoint on develop, snapshots data/ for it and adds it to the feature, noting the
+ * Claude session it was made in (so the version can link to how it was built).
  * Null, and nothing committed, when no feature is open, develop isn't checked out or no file changed. When the changes add a
  * value from the app's .env, nothing is committed either, and it returns { refused }: what Claude is told to do about it.
  */
-const checkpoint = (appDir, { label, prompt = '' }, now = new Date()) =>
+const checkpoint = (appDir, { label, prompt = '', session = '' }, now = new Date()) =>
   withLock(appDir, () => {
     const feature = read(appDir).feature;
     if (!feature) return null;
@@ -245,7 +257,8 @@ const checkpoint = (appDir, { label, prompt = '' }, now = new Date()) =>
     const sha = git(appDir, 'rev-parse', 'HEAD');
     snapshotData(appDir, sha);
     const made = { sha, label, prompt, at: now.toISOString() };
-    writeJson(files(appDir).feature, { ...feature, checkpoints: [...feature.checkpoints, made] });
+    const sessions = feature.sessions ?? [];
+    writeJson(files(appDir).feature, { ...feature, checkpoints: [...feature.checkpoints, made], sessions: session && !sessions.includes(session) ? [...sessions, session] : sessions });
     return made;
   });
 
@@ -372,7 +385,10 @@ const workTree = (appDir) => {
   }
 };
 
-/** The versions kept so far, oldest first: [{ tag: 'v2', name, sha, at }] from the app's annotated v<N> tags. */
+/**
+ * The versions kept so far, oldest first: [{ tag: 'v2', name, sha, at, sessions }] from the app's annotated v<N> tags, with the
+ * Claude sessions each was built in (versions.json; none for the template's versions or a restore).
+ */
 const versions = (appDir) => {
   let out;
   try {
@@ -380,11 +396,12 @@ const versions = (appDir) => {
   } catch {
     return [];
   }
+  const built = readJson(files(appDir).versions, {});
   return out
     .split('\n')
     .map((line) => line.split('\t'))
     .filter(([tag]) => /^v\d+$/.test(tag ?? ''))
-    .map(([tag, commit, object, at, subject = '']) => ({ tag, name: subject.replace(new RegExp(`^${tag}\\s+`), ''), sha: commit || object, at }));
+    .map(([tag, commit, object, at, subject = '']) => ({ tag, name: subject.replace(new RegExp(`^${tag}\\s+`), ''), sha: commit || object, at, sessions: built[tag]?.sessions ?? [] }));
 };
 
 /** The tag the next version kept gets: one past the highest so far. */
@@ -510,6 +527,7 @@ const keep = (appDir, { summary, anyway = false } = {}) =>
       }
     })();
     git(appDir, 'tag', '-a', version, '-m', `${version} ${feature.name}`, sha);
+    writeJson(files(appDir).versions, { ...readJson(files(appDir).versions, {}), [version]: { sessions: feature.sessions ?? [] } });
     // develop to the version too, its index with it; the files on disk are that version's already.
     git(appDir, 'reset', '-q', '--mixed', sha);
     close(appDir);
@@ -607,6 +625,133 @@ const forgetWentBack = (appDir) =>
     return `[studio] She went back to the checkpoint "${to.label}": the app's code and data are as they were then. ${later} Don't assume anything from them is still there.`;
   });
 
+// --- previewing or restoring a version -------------------------------------------------------
+
+/** The snapshot data/ was in when she started previewing (never a commit's sha). */
+const PREVIEW_DATA = 'preview';
+
+/** One of the versions kept, by tag, or an error saying there's no such version. */
+const findVersion = (appDir, tag) => {
+  const version = versions(appDir).find((candidate) => candidate.tag === tag);
+  if (!version) throw new Error(`there is no version ${tag}`);
+  return version;
+};
+
+/** Refuses while a feature is open: previewing or restoring a version would get mixed up with it. */
+const refuseWhileBuilding = (appDir, what) => {
+  const feature = read(appDir).feature;
+  if (feature) throw new Error(`"${feature.name}" is being built. Keep it or discard it before you ${what}.`);
+};
+
+/** Whether two commits need different packages installed (their package-lock.json, or package.json, differ). */
+const packagesDiffer = (appDir, a, b) => {
+  try {
+    git(appDir, 'diff', '--quiet', a, b, '--', 'package-lock.json', 'package.json');
+    return false;
+  } catch {
+    return true;
+  }
+};
+
+/** Whether two commits (or trees) hold the same files, FEATURES.md aside. */
+const sameCode = (appDir, a, b) => {
+  try {
+    git(appDir, 'diff', '--quiet', a, b, '--', '.', ':(exclude)FEATURES.md');
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Previews an old version: its code is checked out, detached (no branch moves), for the app's dev server to pick up. What
+ * there was (the branch, the files, uncommitted ones too, and data/) is kept, so endPreview puts it back exactly; data/ is
+ * the app's own meanwhile. Previewing another version on top keeps what there was before the first. Refused while a feature
+ * is open. When the version needs other packages than are installed, packagesDiffer says so (they aren't installed). Returns
+ * previewView.
+ */
+const preview = (appDir, tag, now = new Date()) =>
+  withLock(appDir, () => {
+    refuseWhileBuilding(appDir, 'preview a version');
+    const version = findVersion(appDir, tag);
+    const before =
+      readJson(files(appDir).preview, null) ??
+      (() => {
+        snapshotData(appDir, PREVIEW_DATA);
+        return { branch: git(appDir, 'symbolic-ref', '--short', '-q', 'HEAD'), head: git(appDir, 'rev-parse', 'HEAD'), tree: workTree(appDir) };
+      })();
+    git(appDir, 'reset', '-q', '--hard');
+    git(appDir, 'clean', '-q', '-f', '-d');
+    git(appDir, 'checkout', '-q', '--detach', version.sha);
+    const previewing = { tag, name: version.name, sha: version.sha, branch: before.branch, head: before.head, tree: before.tree, at: now.toISOString(), packagesDiffer: packagesDiffer(appDir, before.head, version.sha) };
+    writeJson(files(appDir).preview, previewing);
+    return previewView(previewing);
+  });
+
+/** Ends the preview (inside the lock): the branch, the files (uncommitted ones as uncommitted) and data/ as they were before it. */
+const leavePreview = (appDir) => {
+  const previewing = readJson(files(appDir).preview, null);
+  if (!previewing) throw new Error("You aren't previewing a version.");
+  // Anything changed while previewing goes: only the version as it was is shown.
+  git(appDir, 'checkout', '-q', '-f', previewing.branch || previewing.head);
+  git(appDir, 'reset', '-q', '--hard', previewing.head);
+  git(appDir, 'clean', '-q', '-f', '-d');
+  git(appDir, 'read-tree', '--reset', '-u', previewing.tree);
+  git(appDir, 'reset', '-q');
+  restoreData(appDir, PREVIEW_DATA);
+  fs.rmSync(path.join(files(appDir).snapshots, PREVIEW_DATA), { recursive: true, force: true });
+  fs.rmSync(files(appDir).preview, { force: true });
+  return { tag: previewing.tag };
+};
+
+/** Goes back to the latest from previewing a version: code and data exactly as they were before. Returns { tag } (the one previewed). */
+const endPreview = (appDir) => withLock(appDir, () => leavePreview(appDir));
+
+/**
+ * Restores an old version: a new commit on main whose files are that version's, but for FEATURES.md, which keeps every entry and
+ * gains one for the restore ("## v(N+1) restore vM", saying what it brought back). main only fast-forwards to it, it is tagged
+ * v(N+1) ("v(N+1) restore vM"), and develop is reset to it and checked out. No version is rewritten, and data/ stays as it is.
+ * Refused while a feature is open, when there are changes that aren't in any version, or when the app's code is that version's
+ * already. Ends a preview first. Returns { version, sha, restored }; push with pushInBackground(appDir, ['main']).
+ */
+const restore = (appDir, tag) =>
+  withLock(appDir, () => {
+    refuseWhileBuilding(appDir, 'restore a version');
+    const version = findVersion(appDir, tag);
+    if (readJson(files(appDir).preview, null)) leavePreview(appDir);
+    if (git(appDir, 'status', '--porcelain')) throw new Error('The app has changes that are in no version. Start a feature to keep or discard them first.');
+    const main = git(appDir, 'rev-parse', 'main');
+    const next = nextVersion(appDir);
+    const name = `restore ${tag}`;
+    const featuresFile = 'FEATURES.md';
+    let features;
+    try {
+      features = git(appDir, 'show', `${main}:${featuresFile}`) + '\n';
+    } catch {
+      features = '# Features\n';
+    }
+    const entry = `${features.replace(/\n*$/, '\n')}\n## ${next} ${name}\n\nBrought back ${tag} ("${version.name}"): the app's code is as it was then, and its data as it is now.\n`;
+    // The version's files, with FEATURES.md as it is now plus the entry, in a throwaway index so the real one is untouched.
+    const index = path.join(os.tmpdir(), `studio-index-${crypto.randomUUID()}`);
+    const env = { ...process.env, GIT_INDEX_FILE: index, GIT_TERMINAL_PROMPT: '0' };
+    let tree;
+    try {
+      execFileSync('git', ['-C', appDir, 'read-tree', version.sha], { stdio: 'ignore', env });
+      const blob = execFileSync('git', ['-C', appDir, 'hash-object', '-w', '--stdin'], { input: entry, encoding: 'utf8', env }).trim();
+      execFileSync('git', ['-C', appDir, 'update-index', '--add', '--cacheinfo', `100644,${blob},${featuresFile}`], { stdio: 'ignore', env });
+      tree = execFileSync('git', ['-C', appDir, 'write-tree'], { encoding: 'utf8', env }).trim();
+    } finally {
+      fs.rmSync(index, { force: true });
+    }
+    if (sameCode(appDir, main, tree)) throw new Error(`The app's code is already as it was in ${tag}, so there is nothing to restore.`);
+    const made = git(appDir, 'commit-tree', tree, '-p', main, '-m', `Restore ${tag}`);
+    // From where main was, to a commit whose parent that is: only ever a fast-forward.
+    git(appDir, 'update-ref', 'refs/heads/main', made, main);
+    git(appDir, 'tag', '-a', next, '-m', `${next} ${name}`, made);
+    git(appDir, 'checkout', '-q', '-f', '-B', 'develop', made);
+    return { version: next, sha: made, restored: tag };
+  });
+
 const CHECKPOINT_LINE = /^[\s>*_`-]*checkpoint[*_`]*\s*:\s*(.+?)\s*$/gim;
 const MAX_LABEL = 200;
 
@@ -687,7 +832,9 @@ const onPromptSubmit = (event, appDir = appFor(event)) => {
   // Her message lets go of what going back left to bring back, and Claude is told she went back, this once.
   const wentBack = forgetWentBack(appDir);
   notePrompt(appDir, event.prompt);
-  if (turnMode(appDir) !== 'build' || read(appDir).feature) return wentBack;
+  const { feature: open, preview } = read(appDir);
+  if (preview) return `[studio] She is previewing ${preview.tag} ("${preview.name}"), an old version of the app, to look at it. Don't change any files: nothing changed now would be kept. If she asks for a change, tell her to click "back to latest" above the app first.`;
+  if (turnMode(appDir) !== 'build' || open) return wentBack;
   const feature = start(appDir, nameFromPrompt(event.prompt));
   pushInBackground(appDir);
   return `[studio] No feature was open, so a new one was started for this work, called "${feature.name}".`;
@@ -701,7 +848,7 @@ const onPromptSubmit = (event, appDir = appFor(event)) => {
 const onStop = (event, appDir = appFor(event)) => {
   if (!appDir || event.agent_id || turnMode(appDir) !== 'build') return null;
   const reply = event.last_assistant_message || lastReply(event.transcript_path);
-  const made = checkpoint(appDir, { label: turnLabel(reply), prompt: readJson(files(appDir).turn, {}).prompt ?? '' });
+  const made = checkpoint(appDir, { label: turnLabel(reply), prompt: readJson(files(appDir).turn, {}).prompt ?? '', session: event.session_id ?? '' });
   if (made?.refused) return { ...made, block: !event.stop_hook_active };
   if (made) {
     fs.rmSync(files(appDir).turn, { force: true });
@@ -751,4 +898,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { bringBack, checkpoint, discard, fallbackSummary, forgetWentBack, goBack, keep, lastReply, nameFromPrompt, nextVersion, notePrompt, onPromptSubmit, onStop, push, pushInBackground, read, restoreData, runGate, snapshotData, start, stateDir, summarise, turnLabel, turnMode, versions, withLock, writeDigest };
+module.exports = { bringBack, checkpoint, discard, endPreview, fallbackSummary, forgetWentBack, goBack, keep, lastReply, nameFromPrompt, nextVersion, notePrompt, onPromptSubmit, onStop, preview, push, pushInBackground, read, restore, restoreData, runGate, snapshotData, start, stateDir, summarise, turnLabel, turnMode, versions, withLock, writeDigest };

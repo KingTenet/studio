@@ -254,6 +254,7 @@ const Checkpoints = ({ w, feature }: { w: App; feature: Feature }) => {
 /** The Feature section's body: the feature being built and its checkpoints (each with what she asked for), Keep and Discard; or a way to start one. */
 export const FeaturePanel = ({ w }: { w: App | null }) => {
   const feature = w?.feature
+  if (w?.preview && !feature) return <p className="text-sm text-muted-foreground">You're previewing {w.preview.tag}. Go back to the latest version to start a feature.</p>
   if (!w || !feature) return <StartFeature hint="No feature in progress. Name one to start building it." />
   return (
     <div className="grid gap-2">
