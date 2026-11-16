@@ -1,4 +1,4 @@
-import type { ArtifactNote, ArtifactsView, ControlState, FeatureCheck, Preview, SessionView, WentBack } from './types'
+import type { ArtifactNote, ArtifactsView, ControlState, FeatureCheck, Mode, Preview, SessionView, WentBack } from './types'
 
 const API = '/_env/api'
 const HEADERS = { 'Content-Type': 'application/json', 'X-Studio': '1' }
@@ -91,6 +91,8 @@ export const previewVersion = (tag: string) => featureAction<Preview>('/version/
 export const endPreview = () => featureAction<{ tag: string }>('/version/end-preview', {}, 'The app could not go back to the latest version.')
 /** Restores an old version as a new one: its code, on top of the latest, tagged as the next version. */
 export const restoreVersion = (tag: string) => featureAction<{ version: string; sha: string; restored: string }>('/version/restore', { tag }, 'That version could not be restored.')
+/** Sets the chat's Ask / Plan / Build switch, from her next message on (and Claude's effort for it). */
+export const setMode = (mode: Mode) => featureAction<{ mode: Mode }>('/mode', { mode }, 'The mode could not be changed.')
 export const setTooltips = (tooltips: boolean) => post('/prefs', { tooltips })
 /** Saves one UI setting every page shares (useSharedPref). */
 export const setUiPref = (key: string, value: unknown) => post('/prefs', { ui: { [key]: value } })

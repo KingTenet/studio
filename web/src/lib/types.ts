@@ -40,6 +40,12 @@ export type WentBack = { to: { sha: string; label: string }; discarded: string[]
  */
 export type Version = { tag: string; name: string; sha: string; at: string; sessions: string[] }
 
+/**
+ * The chat's modes: Ask (an answer) and Plan (a plan, as an artifact) read and run but never change the app's files; Build
+ * changes them, in a feature, with a checkpoint per turn.
+ */
+export type Mode = 'ask' | 'plan' | 'build'
+
 /** An old version being previewed in the app pane; `packagesDiffer` when it needs other packages than are installed. */
 export type Preview = { tag: string; name: string; at: string; packagesDiffer: boolean }
 
@@ -73,6 +79,8 @@ export type App = {
   versions: Version[]
   /** The old version being previewed, or null when the app is at the latest. */
   preview: Preview | null
+  /** The chat's switch: what her next message may do. */
+  mode: Mode
 }
 
 export type ControlState = {

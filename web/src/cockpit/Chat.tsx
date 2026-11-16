@@ -10,11 +10,11 @@ import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { parseAnsi, type AnsiStyle } from '@/lib/ansi'
 import { FOCUS_CHAT_EVENT } from '@/lib/artifacts'
-import { focusAgent, pressEsc, sendToSession, uploadFile } from '@/lib/api'
+import { focusAgent, pressEsc, sendToSession, setMode, uploadFile } from '@/lib/api'
 import { agentLook, sessionControls, sessionName, waitingOn, type ChipModel, type LookName, type StartModel } from '@/lib/controls'
 import { parseMarkdown, type Inline as InlinePart } from '@/lib/markdown'
 import { resolveQueue, type ChatMessage } from '@/lib/queue'
-import type { Agent, AgentStatus, App, SessionPrompt } from '@/lib/types'
+import type { Agent, AgentStatus, App, Mode, SessionPrompt } from '@/lib/types'
 import { cn } from 'cn'
 import { StartFeature } from './FeaturePanel'
 import { useDictation } from './MicButton'
@@ -337,6 +337,43 @@ const ChatStrip = ({ w, onExpand, overlay }: { w: App | null; onExpand: () => vo
   )
 }
 
+// The chat's switch: what each mode lets Claude do, for the tooltip and the line under it.
+const MODES: { mode: Mode; label: string; tip: string }[] = [
+  { mode: 'ask', label: 'Ask', tip: 'Ask: Claude looks into the app and answers. It never changes the app.' },
+  { mode: 'plan', label: 'Plan', tip: 'Plan: Claude works out how to build something and shows you the plan. It never changes the app.' },
+  { mode: 'build', label: 'Build', tip: 'Build: Claude changes the app, and each change is saved as a checkpoint of the feature.' },
+]
+
+/** The Ask / Plan / Build switch by the message box. What she picks shows at once; the server's mode once it has caught up. */
+const ModeSwitch = ({ mode }: { mode: Mode }) => {
+  const tip = useTip()
+  // What she picked, and the server's mode then: shown until the server's mode moves on from that.
+  const [picked, setPicked] = useState<{ to: Mode; from: Mode } | null>(null)
+  const [error, setError] = useState('')
+  const shown = picked && picked.from === mode ? picked.to : mode
+  const pick = async (next: Mode) => {
+    setPicked({ to: next, from: mode })
+    setError('')
+    const answer = await setMode(next)
+    if ('error' in answer) {
+      setPicked(null)
+      setError(answer.error)
+    }
+  }
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <ToggleGroup type="single" variant="outline" size="sm" spacing={0} value={shown} aria-label="Mode" onValueChange={(value) => value && void pick(value as Mode)}>
+        {MODES.map(({ mode: value, label, tip: text }) => (
+          <ToggleGroupItem key={value} value={value} title={tip(text)} className="h-6 px-2.5 text-xs data-[state=on]:font-semibold">
+            {label}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+      <span className={cn('min-w-0 truncate text-xs', error ? 'text-destructive' : 'text-muted-foreground')}>{error || (shown === 'build' ? 'Changes the app' : "Won't change the app")}</span>
+    </div>
+  )
+}
+
 type Dropped = { key: string; name: string; preview?: string; path?: string; error?: string }
 let dropCount = 0
 const newDropKey = () => 'drop' + ++dropCount
@@ -605,7 +642,7 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
       return
     }
     if (!agent) return
-    if (w?.feature === null) {
+    if (w?.feature === null && w.mode === 'build') {
       setText(message)
       setNaming(message)
       return
@@ -894,6 +931,7 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
               ))}
             </div>
           )}
+          {w && <ModeSwitch mode={w.mode} />}
           {naming !== null && <StartFeature hint="Changes are made as part of a feature. Name this one to start it; your message is sent once it has started." autoFocus onStarted={startedFeature} onCancel={() => setNaming(null)} />}
           <Textarea
             ref={messageBox}

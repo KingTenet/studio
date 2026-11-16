@@ -25,6 +25,14 @@
  *   preview.json      while she previews an old version: { tag, sha, branch, tree, at, packagesDiffer }, the version shown and the
  *                     branch and files (tree, uncommitted ones too) to go back to; data/ as it was is in snapshots/preview/
  *   versions.json     { <tag>: { sessions: [session id] } }: the Claude sessions each kept version was built in, oldest first
+ *   mode.json         { mode, at }: the chat's Ask / Plan / Build switch (Build when absent)
+ *   turns/<session>.json  the mode the session's last turn runs in, as the switch was when her message was sent: { mode, at, start },
+ *                     start (Ask and Plan only) being where the app was then ({ branch, head, tree }), for the Stop hook to put back
+ *
+ * The switch decides what a turn may do. Build changes the app and makes checkpoints. Ask (answer her) and Plan (write a plan,
+ * published as an artifact) only read and run: an edit to the app's files is refused (PreToolUse), and whatever the turn changed
+ * anyway, through a command, is put back when it ends (Stop), leaving any changes from before it; no feature is started or
+ * checkpointed for them.
  *
  * Keeping a feature squashes its checkpoints into one commit on main named after it (main only ever fast-forwards),
  * with its summary added to the app's FEATURES.md, tags it v(N+1) and leaves develop equal to main. Discarding it
@@ -39,7 +47,9 @@
  * Usage: node lib/feature.js prompt-submit         UserPromptSubmit hook: notes the prompt; starts a feature if none is open;
  *                                                  lets go of what going back left, telling Claude
  *        node lib/feature.js stop                  Stop hook: commits a checkpoint if the turn changed files; when the changes
- *                                                  hold a value from the app's .env, commits nothing and tells Claude to move it
+ *                                                  hold a value from the app's .env, commits nothing and tells Claude to move it.
+ *                                                  After an Ask or Plan turn, puts back what it changed instead
+ *        node lib/feature.js pre-tool-use          PreToolUse hook: refuses an edit to the app's files in an Ask or Plan turn
  *        node lib/feature.js start <name> [app]    start a feature (the cockpit's server does this, and runs /clear)
  *        node lib/feature.js push [app] [branch…]  push develop, those branches and every branch whose push failed
  *        node lib/feature.js show [app]            the open feature and pending pushes, as JSON
@@ -78,7 +88,7 @@ const configuredApp = () => path.resolve(readJson(path.join(studioHome(), 'confi
 const stateDir = (appDir) => path.join(studioHome(), 'features', path.resolve(appDir).replace(/[^A-Za-z0-9]/g, '-'));
 const files = (appDir) => {
   const dir = stateDir(appDir);
-  return { dir, feature: path.join(dir, 'feature.json'), turn: path.join(dir, 'turn.json'), push: path.join(dir, 'push.json'), snapshots: path.join(dir, 'snapshots'), gate: path.join(dir, 'gate.json'), digest: path.join(dir, 'summary-digest.md'), wentBack: path.join(dir, 'went-back.json'), preview: path.join(dir, 'preview.json'), versions: path.join(dir, 'versions.json') };
+  return { dir, feature: path.join(dir, 'feature.json'), turn: path.join(dir, 'turn.json'), push: path.join(dir, 'push.json'), snapshots: path.join(dir, 'snapshots'), gate: path.join(dir, 'gate.json'), digest: path.join(dir, 'summary-digest.md'), wentBack: path.join(dir, 'went-back.json'), preview: path.join(dir, 'preview.json'), versions: path.join(dir, 'versions.json'), mode: path.join(dir, 'mode.json'), turns: path.join(dir, 'turns') };
 };
 
 const git = (appDir, ...args) => execFileSync('git', ['-C', appDir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }).trim();
@@ -809,11 +819,79 @@ const nameFromPrompt = (prompt) => {
   return (words.length > 40 ? words.slice(0, 40).trimEnd() + '…' : words) || 'Untitled feature';
 };
 
+// --- Ask / Plan / Build ----------------------------------------------------------------------
+
+/** The chat's modes, with the effort Claude works at in each (set with /effort by the cockpit's server). */
+const EFFORT = { ask: 'low', plan: 'high', build: 'medium' };
+const isMode = (mode) => Object.hasOwn(EFFORT, mode ?? '');
+
+/** The mode the chat's switch is on: 'ask', 'plan' or 'build' (the default). */
+const readMode = (appDir) => {
+  const { mode } = readJson(files(appDir).mode, {});
+  return isMode(mode) ? mode : 'build';
+};
+
+/** Sets the chat's switch. A turn under way keeps the mode it started in, so this applies from her next message. */
+const setMode = (appDir, mode, now = new Date()) => {
+  if (!isMode(mode)) throw new Error('the mode must be ask, plan or build');
+  writeJson(files(appDir).mode, { mode, at: now.toISOString() });
+  return mode;
+};
+
+/** The file noting a session's turn: its mode, and where the app was when an Ask or Plan turn started. */
+const turnFile = (appDir, session) => path.join(files(appDir).turns, `${String(session || 'unknown').replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
+
+/** The mode a session's turn runs in: the switch as it was when her message was sent, else as it is now. */
+const turnMode = (appDir, session) => {
+  const { mode } = readJson(turnFile(appDir, session), {});
+  return isMode(mode) ? mode : readMode(appDir);
+};
+
+const currentBranch = (appDir) => {
+  try {
+    return git(appDir, 'symbolic-ref', '--short', '-q', 'HEAD');
+  } catch {
+    return '';
+  }
+};
+
+/** Where the app is: its branch ('' when detached), HEAD and the tree of its files, uncommitted and new ones too. */
+const whereNow = (appDir) => ({ branch: currentBranch(appDir), head: git(appDir, 'rev-parse', 'HEAD'), tree: workTree(appDir) });
+
 /**
- * The mode the turn runs in. Every turn is a Build turn for now; Ask and Plan (ISSUE-018) will read the cockpit's
- * switch here, and the hooks then skip checkpoints, and starting a feature, for them.
+ * Puts the app back where an Ask or Plan turn started (whereNow then): whatever the turn changed (an edit, a new or deleted file,
+ * a commit, another branch checked out) goes, and what was there before it, uncommitted changes too, stays as it was. Files git
+ * ignores (data/, node_modules, .env) are left alone. Returns whether anything had changed.
  */
-const turnMode = () => 'build';
+const putBack = (appDir, start) =>
+  withLock(appDir, () => {
+    const now = whereNow(appDir);
+    if (now.branch === start.branch && now.head === start.head && now.tree === start.tree) return false;
+    git(appDir, 'checkout', '-q', '-f', start.branch || start.head);
+    git(appDir, 'reset', '-q', '--hard', start.head);
+    git(appDir, 'clean', '-q', '-f', '-d');
+    // The files as they were, uncommitted changes and new files too; then the index back to the commit, so they show as uncommitted again.
+    git(appDir, 'read-tree', '--reset', '-u', start.tree);
+    git(appDir, 'reset', '-q');
+    return true;
+  });
+
+/** What Claude is told with each message, in the mode it was sent in. */
+const MODE_RULES = {
+  ask: "[studio] Ask mode: she wants an answer, not a change. Read the app's files and run commands to find out, then explain in plain words in the chat (or, when a page would explain it better, write one outside the app's folder, in your scratchpad, and publish it as an artifact). Don't change the app's files: edits to them are refused in this mode, and anything a command changes in the app's folder is put back when you finish. If she asks for a change, tell her to switch to Build. No Checkpoint: line.",
+  plan: "[studio] Plan mode: she wants a plan, not the change itself yet. Read the app's files and run commands as you need, then write the plan as an HTML page outside the app's folder (in your scratchpad) and publish it as an artifact, with a short summary in the chat. Say what she will see when it is built, then the steps. Don't change the app's files: edits to them are refused in this mode, and anything a command changes in the app's folder is put back when you finish. No Checkpoint: line.",
+  build: '[studio] Build mode: you can change the app\'s files again. End your reply with a "Checkpoint: <what changed, in plain words>" line.',
+};
+
+/** Why an edit is refused in an Ask or Plan turn, for Claude. */
+const EDIT_REFUSED = {
+  ask: "She has the chat in Ask mode, so the app's files can't be changed now. Answer her without changing them; if it needs a change, tell her to switch to Build.",
+  plan: "She has the chat in Plan mode, so the app's files can't be changed now. Put the change in the plan instead, and publish the plan as an artifact (write its page outside the app's folder, in your scratchpad).",
+};
+
+const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+
+const inside = (file, dir) => file === dir || file.startsWith(dir + path.sep);
 
 /** The app's folder when a hook event comes from inside it and it is a git repo, else null. */
 const appFor = (event, appDir = configuredApp()) => {
@@ -823,30 +901,66 @@ const appFor = (event, appDir = configuredApp()) => {
 };
 
 /**
- * UserPromptSubmit: notes the prompt. A Build turn with no feature open starts one, named from the prompt (the
- * cockpit asks for a name first, so this only happens for a prompt typed straight into the pane). Returns the
- * text to add to Claude's prompt, if any.
+ * UserPromptSubmit: notes the prompt, and the mode the turn runs in (the switch as it is now). An Ask or Plan turn notes where the
+ * app is, for the Stop hook to put back, and Claude is told the mode's rules. A Build turn with no feature open starts one, named
+ * from the prompt (the cockpit asks for a name first, so this only happens for a prompt typed straight into the pane); the first
+ * Build turn after an Ask or Plan one tells Claude it may change files again. Returns the text to add to Claude's prompt, if any.
  */
 const onPromptSubmit = (event, appDir = appFor(event)) => {
   if (!appDir || event.agent_id) return '';
   // Her message lets go of what going back left to bring back, and Claude is told she went back, this once.
   const wentBack = forgetWentBack(appDir);
   notePrompt(appDir, event.prompt);
+  const mode = readMode(appDir);
+  const turn = turnFile(appDir, event.session_id);
+  const before = readJson(turn, {}).mode;
+  writeJson(turn, { mode, at: new Date().toISOString(), ...(mode === 'build' ? {} : { start: whereNow(appDir) }) });
   const { feature: open, preview } = read(appDir);
   if (preview) return `[studio] She is previewing ${preview.tag} ("${preview.name}"), an old version of the app, to look at it. Don't change any files: nothing changed now would be kept. If she asks for a change, tell her to click "back to latest" above the app first.`;
-  if (turnMode(appDir) !== 'build' || open) return wentBack;
+  const notes = (...texts) => texts.filter(Boolean).join('\n\n');
+  if (mode !== 'build') return notes(wentBack, MODE_RULES[mode]);
+  const buildAgain = isMode(before) && before !== 'build' ? MODE_RULES.build : '';
+  if (open) return notes(wentBack, buildAgain);
   const feature = start(appDir, nameFromPrompt(event.prompt));
   pushInBackground(appDir);
-  return `[studio] No feature was open, so a new one was started for this work, called "${feature.name}".`;
+  return notes(`[studio] No feature was open, so a new one was started for this work, called "${feature.name}".`, buildAgain);
+};
+
+/**
+ * PreToolUse: in an Ask or Plan turn, an edit (Edit, Write, MultiEdit, NotebookEdit) to a file in the app's folder is refused.
+ * Returns why, for Claude, or '' to let the call go on as it would. Files elsewhere (the plan's page in Claude's scratchpad) may
+ * be written. Subagents' calls count as their session's turn.
+ */
+const onPreToolUse = (event, appDir = configuredApp()) => {
+  if (!EDIT_TOOLS.has(event.tool_name)) return '';
+  const file = event.tool_input?.file_path ?? event.tool_input?.notebook_path;
+  if (typeof file !== 'string' || !file) return '';
+  const target = path.resolve(event.cwd ?? process.cwd(), file);
+  const real = (() => {
+    try {
+      return fs.realpathSync(appDir);
+    } catch {
+      return appDir;
+    }
+  })();
+  if (!inside(target, appDir) && !inside(target, real)) return '';
+  const mode = turnMode(appDir, event.session_id);
+  return mode === 'build' ? '' : EDIT_REFUSED[mode];
 };
 
 /**
  * Stop: a Build turn that changed files becomes a checkpoint, which is then pushed. Returns the checkpoint, or null; or, when
  * the changes hold values from .env, { refused, block }: block (keep Claude going, to fix it) is false when Claude is already
  * going on because of a Stop hook, so a value it can't move never loops. The turn's prompt is kept for the checkpoint to come.
+ * An Ask or Plan turn makes no checkpoint: whatever it changed is put back (putBack), and it returns { putBack } (whether
+ * anything had changed). The feature stays open either way.
  */
 const onStop = (event, appDir = appFor(event)) => {
-  if (!appDir || event.agent_id || turnMode(appDir) !== 'build') return null;
+  if (!appDir || event.agent_id) return null;
+  if (turnMode(appDir, event.session_id) !== 'build') {
+    const { start: at } = readJson(turnFile(appDir, event.session_id), {});
+    return at ? { putBack: putBack(appDir, at) } : null;
+  }
   const reply = event.last_assistant_message || lastReply(event.transcript_path);
   const made = checkpoint(appDir, { label: turnLabel(reply), prompt: readJson(files(appDir).turn, {}).prompt ?? '', session: event.session_id ?? '' });
   if (made?.refused) return { ...made, block: !event.stop_hook_active };
@@ -882,6 +996,15 @@ if (require.main === module) {
       process.stderr.write(`studio: ${error.message}\n`);
     }
     process.exit(0);
+  } else if (command === 'pre-tool-use') {
+    // Silence lets the call go on through the usual permissions; a deny refuses it, with the reason for Claude.
+    try {
+      const reason = onPreToolUse(readStdin());
+      if (reason) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }) + '\n');
+    } catch (error) {
+      process.stderr.write(`studio: ${error.message}\n`);
+    }
+    process.exit(0);
   } else if (command === 'start' && args[0]) {
     const appDir = path.resolve(args[1] ?? configuredApp());
     print(start(appDir, args[0]));
@@ -893,9 +1016,9 @@ if (require.main === module) {
   } else if (command === 'digest') {
     process.stdout.write(writeDigest(path.resolve(args[0] ?? configuredApp())) + '\n');
   } else {
-    process.stderr.write('usage: feature.js prompt-submit|stop|start <name> [app dir]|push [app dir] [branch…]|show [app dir]|digest [app dir]\n');
+    process.stderr.write('usage: feature.js prompt-submit|stop|pre-tool-use|start <name> [app dir]|push [app dir] [branch…]|show [app dir]|digest [app dir]\n');
     process.exit(1);
   }
 }
 
-module.exports = { bringBack, checkpoint, discard, endPreview, fallbackSummary, forgetWentBack, goBack, keep, lastReply, nameFromPrompt, nextVersion, notePrompt, onPromptSubmit, onStop, preview, push, pushInBackground, read, restore, restoreData, runGate, snapshotData, start, stateDir, summarise, turnLabel, turnMode, versions, withLock, writeDigest };
+module.exports = { EFFORT, bringBack, checkpoint, discard, endPreview, fallbackSummary, forgetWentBack, goBack, keep, lastReply, nameFromPrompt, nextVersion, notePrompt, onPreToolUse, onPromptSubmit, onStop, preview, putBack, readMode, setMode, push, pushInBackground, read, restore, restoreData, runGate, snapshotData, start, stateDir, summarise, turnLabel, turnMode, versions, withLock, writeDigest };

@@ -4,7 +4,8 @@
  * The studio's local server, at http://localhost:4000: it serves the cockpit page and the API behind it,
  * for one app (config.appDir) and the Claude session working on it in a herdr pane.
  *
- * The API: /_env/api/state (the app, its Claude pane, the feature being built, its versions and the shared prefs),
+ * The API: /_env/api/state (the app, its Claude pane, the feature being built, its versions, the chat's mode and the shared prefs),
+ * the chat's Ask / Plan / Build switch (mode),
  * the feature (feature/start, feature/check, feature/keep, feature/discard, feature/go-back, feature/bring-back),
  * the versions (version/preview, version/end-preview, version/restore),
  * the chat (session, session/send),
@@ -30,7 +31,7 @@ const path = require('node:path');
 const { COMMAND_SHELL_MARKER, pausedSessions, processTree, readClosed, runningCommands, withRealSessions } = require('./claude-reaper');
 const { describe: describeArtifacts, folderFor: artifactFolder, locate: locateArtifact, remove: removeArtifacts, removeNote: removeArtifactNote } = require('./artifacts');
 const { paneInput, panePrompt, readTranscript, sessionTitle, transcriptPath } = require('./session-view');
-const { bringBack, discard: discardFeature, endPreview, goBack, keep: keepFeature, nextVersion, preview, pushInBackground, read: readFeature, restore, runGate, start: startFeature, summarise, versions } = require('./feature');
+const { EFFORT, bringBack, discard: discardFeature, endPreview, goBack, keep: keepFeature, nextVersion, preview, pushInBackground, read: readFeature, readMode, restore, runGate, setMode, start: startFeature, summarise, versions } = require('./feature');
 
 const SCRIPTS = path.resolve(__dirname, '..');
 const WEB_DIST = path.resolve(SCRIPTS, '..', 'web', 'dist');
@@ -731,6 +732,8 @@ const sendToSession = async (req, res) => {
     return;
   }
   if (context) notePageContext(paneId, context);
+  // The effort for the chat's mode first, so this message runs at it; time for /effort to run before the message is typed.
+  if (syncEffort(appInfo().dir)) await new Promise((resolve) => setTimeout(resolve, 700));
   execFileSync('herdr', ['pane', 'run', paneId, message], { stdio: 'ignore', timeout: 5000 });
   res.writeHead(204).end();
 };
@@ -1084,6 +1087,7 @@ const state = () => {
       paused: pausedOffers(readClosed(), app.dir, runningSessions, livePanes).map((record) => ({ ...record, title: sessionTitle(record.sessionId), active: lastActive(record.sessionId) })),
       ...readFeature(app.dir),
       versions: versions(app.dir),
+      mode: readMode(app.dir),
     },
     prefs: { tooltips: config.prefs?.tooltips !== false, ui: mergeUiPrefs(config.prefs?.ui) },
   };
@@ -1157,6 +1161,49 @@ const refuseWhileBusy = (res, chat, what) => {
   if (!chat || (chat.status !== 'working' && chat.status !== 'blocked')) return false;
   sendJson(res, 409, { error: chat.status === 'working' ? `Claude is working. ${what} once it has finished.` : 'Claude is waiting on a question. Answer it first.' });
   return true;
+};
+
+// The effort level last typed into each Claude session ("<pane> <session>" -> level), so it is typed again only for a new
+// session or a new mode. Kept in memory: after the server restarts it is typed once more, which does no harm.
+const effortTyped = new Map();
+
+/**
+ * Types `/effort <level>` for the chat's mode (Ask low, Plan high, Build medium) into the chat's Claude, when its session hasn't
+ * had that level yet: a new session (started, resumed or /clear-ed) or a new mode. Only while it sits idle at an empty prompt,
+ * since typed into a turn it would wait in Claude's queue: while Claude works, a later call does it (the server tries every few
+ * seconds, and before each message the chat sends). /effort also saves the level as her default; the next mode change or
+ * session sets it again. True when it typed; false too when herdr couldn't be reached.
+ */
+const syncEffort = (appDir) => {
+  try {
+    const chat = chatAgent(appDir);
+    if (!chat?.sessionId || (chat.status !== 'idle' && chat.status !== 'done')) return false;
+    const level = EFFORT[readMode(appDir)];
+    const key = `${chat.paneId} ${chat.sessionId}`;
+    if (effortTyped.get(key) === level || paneInput(paneScreen(chat.paneId))) return false;
+    execFileSync('herdr', ['pane', 'run', chat.paneId, `/effort ${level}`], { stdio: 'ignore', timeout: 5000 });
+    effortTyped.set(key, level);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const EFFORT_SYNC_MS = 3000;
+
+/**
+ * Sets the chat's switch ({ mode }: ask, plan or build) and the effort for it. Allowed while Claude works: the turn under way
+ * keeps its mode, and her next message runs in the new one.
+ */
+const setModeNow = async (req, res) => {
+  const { mode } = JSON.parse(await readBody(req));
+  const appDir = appInfo().dir;
+  try {
+    setMode(appDir, mode);
+  } catch (error) {
+    sendJson(res, 400, { error: error.message });
+    return;
+  }
+  sendJson(res, 200, { mode, effortTyped: syncEffort(appDir) });
 };
 
 /**
@@ -1557,6 +1604,11 @@ const handle = async (req, res) => {
     res.writeHead(204).end();
     return;
   }
+  if (req.method === 'POST' && url.pathname === '/_env/api/mode') {
+    if (needsJobHeader(req, res)) return;
+    await setModeNow(req, res);
+    return;
+  }
   if (req.method === 'POST' && url.pathname === '/_env/api/feature/start') {
     if (needsJobHeader(req, res)) return;
     await startFeatureNow(req, res);
@@ -1598,6 +1650,8 @@ if (require.main === module) {
       });
     })
     .listen(CONTROL_PORT, '127.0.0.1', () => process.stderr.write(`studio server on http://localhost:${CONTROL_PORT}\n`));
+  // A new session (or one /clear-ed) gets the effort for the mode once it is idle, and so does a mode changed while Claude worked.
+  setInterval(() => syncEffort(appInfo().dir), EFFORT_SYNC_MS);
 }
 
 module.exports = { appAgents, appInfo, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, freeTextKeys, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, shellQuote, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats };

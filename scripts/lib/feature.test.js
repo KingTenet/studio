@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { bringBack, discard, endPreview, goBack, keep, lastReply, nameFromPrompt, preview, read, restore, runGate, stateDir, summarise, turnLabel, versions } = require('./feature');
+const { bringBack, discard, endPreview, goBack, keep, lastReply, nameFromPrompt, preview, read, readMode, restore, runGate, setMode, stateDir, summarise, turnLabel, versions } = require('./feature');
 
 const SCRIPT = path.join(__dirname, 'feature.js');
 const IDENTITY = { GIT_AUTHOR_NAME: 'Her', GIT_AUTHOR_EMAIL: 'her@example.com', GIT_COMMITTER_NAME: 'Her', GIT_COMMITTER_EMAIL: 'her@example.com' };
@@ -759,6 +759,154 @@ test('summarise falls back to the checkpoint labels when the summariser fails, p
     assert.match(text, /1\. Made the page dark\n   She asked: Make it dark/);
     assert.match(text, /toggle\.js/);
     assert.match(text, /## v1 Getting Started/);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+// --- Ask / Plan / Build ---------------------------------------------------------------------
+
+/** A PreToolUse event for an edit, as Claude Code sends it in auto mode. */
+const editEvent = (tool, input, extra = {}) => ({ hook_event_name: 'PreToolUse', permission_mode: 'auto', tool_name: tool, tool_input: input, tool_use_id: 'toolu_1', ...extra });
+
+test('the switch: Build by default; only ask, plan or build', () => {
+  const t = setup();
+  try {
+    t.withEnv(() => {
+      assert.equal(readMode(t.app), 'build');
+      assert.equal(setMode(t.app, 'plan'), 'plan');
+      assert.equal(readMode(t.app), 'plan');
+      assert.throws(() => setMode(t.app, 'yolo'), /ask, plan or build/);
+      assert.equal(readMode(t.app), 'plan');
+    });
+  } finally {
+    fs.rmSync(t.root, { recursive: true, force: true });
+  }
+});
+
+test('Ask and Plan turns: edits to the app are denied, what a command changed is put back, earlier uncommitted Build work survives, nothing is committed and the feature stays open', async () => {
+  const t = setup();
+  try {
+    t.run(['start', 'dark mode']);
+    t.turn('Make it dark', () => fs.writeFileSync(path.join(t.app, 'toggle.js'), 'toggle\n'), 'Checkpoint: Added a toggle');
+    assert.ok(await until(() => remoteSha(t.origin, 'develop') === git(t.app, 'rev-parse', 'HEAD')), 'the checkpoint is pushed, so the refs settle');
+    // Build work not yet checkpointed (a turn she interrupted): an edit, a new file and a deleted tracked file.
+    fs.writeFileSync(path.join(t.app, 'page.html'), '<h1 class="dark">Getting started</h1>\n');
+    fs.writeFileSync(path.join(t.app, 'notes.txt'), 'mine\n');
+    fs.rmSync(path.join(t.app, 'toggle.js'));
+    const before = { files: allFiles(t.app), status: git(t.app, 'status', '--porcelain'), head: git(t.app, 'rev-parse', 'HEAD'), refs: refs(t.app) };
+    assert.ok(before.status.includes('page.html') && before.status.includes('notes.txt') && before.status.includes('toggle.js'));
+
+    for (const mode of ['ask', 'plan']) {
+      t.withEnv(() => setMode(t.app, mode));
+      const submitted = t.hook('prompt-submit', { prompt: mode === 'ask' ? 'Why is the page dark?' : 'Plan a settings page' });
+      assert.equal(submitted.status, 0, submitted.stderr);
+      assert.match(submitted.stdout, mode === 'ask' ? /^\[studio\] Ask mode: .*Don't change the app's files/ : /^\[studio\] Plan mode: .*publish it as an artifact/);
+
+      // Edits to the app's files are denied, with the reason, in the shape Claude Code reads; subagents' too.
+      const deny = (event) => {
+        const result = t.hook('pre-tool-use', event);
+        assert.equal(result.status, 0, result.stderr);
+        return result.stdout ? JSON.parse(result.stdout) : null;
+      };
+      const denied = deny(editEvent('Edit', { file_path: path.join(t.app, 'page.html'), old_string: 'a', new_string: 'b' }));
+      assert.deepEqual(Object.keys(denied), ['hookSpecificOutput']);
+      assert.equal(denied.hookSpecificOutput.hookEventName, 'PreToolUse');
+      assert.equal(denied.hookSpecificOutput.permissionDecision, 'deny');
+      assert.match(denied.hookSpecificOutput.permissionDecisionReason, mode === 'ask' ? /Ask mode/ : /Plan mode/);
+      assert.ok(deny(editEvent('Write', { file_path: 'src/new.ts', content: 'x' })), 'a path relative to the app');
+      assert.ok(deny(editEvent('MultiEdit', { file_path: path.join(t.app, 'page.html'), edits: [] })));
+      assert.ok(deny(editEvent('NotebookEdit', { notebook_path: path.join(t.app, 'n.ipynb'), new_source: '' })));
+      assert.ok(deny(editEvent('Write', { file_path: path.join(t.app, 'x.ts'), content: 'x' }, { agent_id: 'a1', agent_type: 'general-purpose' })), "a subagent's edit");
+      // The plan's page outside the app, and anything that isn't an edit, go on as usual.
+      assert.equal(deny(editEvent('Write', { file_path: path.join(t.root, 'scratchpad', 'plan.html'), content: '<h1>Plan</h1>' })), null);
+      assert.equal(deny(editEvent('Read', { file_path: path.join(t.app, 'page.html') })), null);
+      assert.equal(deny(editEvent('Bash', { command: 'ls' })), null);
+
+      // What commands change during the turn: an edit, a new file, a deleted file, a commit; and the dev server's log.
+      fs.writeFileSync(path.join(t.app, 'page.html'), '<h1>Hacked</h1>\n');
+      fs.writeFileSync(path.join(t.app, 'hack.js'), 'hack\n');
+      fs.rmSync(path.join(t.app, 'notes.txt'));
+      fs.mkdirSync(path.join(t.app, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(t.app, 'src', 'deep.ts'), 'deep\n');
+      git(t.app, 'add', '-A');
+      git(t.app, 'commit', '-q', '-m', 'sneaky');
+      fs.writeFileSync(path.join(t.app, 'page.html'), '<h1>Hacked again</h1>\n');
+      fs.writeFileSync(path.join(t.app, 'data', 'logs', 'dev.log'), `log during ${mode}`);
+
+      const stopped = t.hook('stop', { last_assistant_message: 'The page is dark because of the class.', stop_hook_active: false });
+      assert.equal(stopped.status, 0, stopped.stderr);
+      assert.equal(stopped.stdout, '');
+      const after = allFiles(t.app);
+      assert.equal(after['data/logs/dev.log'], `log during ${mode}`, 'files git ignores (data/) are left alone');
+      assert.deepEqual({ ...after, 'data/logs/dev.log': 'log' }, before.files, 'every file as it was before the turn');
+      assert.equal(git(t.app, 'status', '--porcelain'), before.status, 'the Build work is still uncommitted');
+      assert.equal(git(t.app, 'rev-parse', 'HEAD'), before.head);
+      assert.equal(git(t.app, 'symbolic-ref', '--short', 'HEAD'), 'develop');
+      assert.equal(refs(t.app), before.refs, 'no commit is left behind');
+      const { feature } = t.withEnv(() => read(t.app));
+      assert.equal(feature.name, 'dark mode', 'the feature stays open');
+      assert.equal(feature.checkpoints.length, 1, 'no checkpoint');
+      fs.writeFileSync(path.join(t.app, 'data', 'logs', 'dev.log'), 'log');
+    }
+
+    // The switch moved to Build while an Ask turn runs: that turn stays an Ask turn.
+    t.withEnv(() => setMode(t.app, 'ask'));
+    t.hook('prompt-submit', { prompt: 'What does toggle do?' });
+    t.withEnv(() => setMode(t.app, 'build'));
+    assert.ok(JSON.parse(t.hook('pre-tool-use', editEvent('Edit', { file_path: path.join(t.app, 'page.html') })).stdout).hookSpecificOutput.permissionDecision === 'deny');
+    fs.writeFileSync(path.join(t.app, 'hack.js'), 'hack\n');
+    t.hook('stop', { last_assistant_message: 'It toggles.' });
+    assert.ok(!fs.existsSync(path.join(t.app, 'hack.js')));
+
+    // The next message is a Build turn: Claude is told it may change files again, once, and the Build work is checkpointed.
+    const build = t.hook('prompt-submit', { prompt: 'Finish the dark mode' });
+    assert.match(build.stdout, /^\[studio\] Build mode: you can change the app's files again/);
+    assert.equal(t.hook('pre-tool-use', editEvent('Edit', { file_path: path.join(t.app, 'page.html') })).stdout, '');
+    const stopped = t.hook('stop', { last_assistant_message: 'Checkpoint: Finished the dark mode' });
+    assert.equal(stopped.status, 0, stopped.stderr);
+    const { feature } = t.withEnv(() => read(t.app));
+    assert.deepEqual(feature.checkpoints.map(({ label, prompt }) => ({ label, prompt })), [{ label: 'Added a toggle', prompt: 'Make it dark' }, { label: 'Finished the dark mode', prompt: 'Finish the dark mode' }]);
+    assert.equal(git(t.app, 'show', 'HEAD:page.html'), '<h1 class="dark">Getting started</h1>');
+    assert.equal(git(t.app, 'status', '--porcelain'), '');
+    assert.equal(t.hook('prompt-submit', { prompt: 'More' }).stdout, '', 'Build again, nothing more to say');
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test('Ask with no feature open starts none and leaves no change; Build with none open starts one', async () => {
+  const t = setup();
+  try {
+    t.withEnv(() => setMode(t.app, 'ask'));
+    const asked = t.hook('prompt-submit', { prompt: 'What is this app?' });
+    assert.match(asked.stdout, /^\[studio\] Ask mode/);
+    assert.equal(t.withEnv(() => read(t.app)).feature, null);
+    fs.writeFileSync(path.join(t.app, 'page.html'), 'changed by a command\n');
+    t.hook('stop', { last_assistant_message: 'It is a starter app.' });
+    assert.equal(git(t.app, 'status', '--porcelain'), '');
+    assert.equal(git(t.app, 'symbolic-ref', '--short', 'HEAD'), 'main');
+    assert.equal(t.withEnv(() => read(t.app)).feature, null);
+
+    t.withEnv(() => setMode(t.app, 'build'));
+    const built = t.hook('prompt-submit', { prompt: 'Add a footer' });
+    assert.match(built.stdout, /^\[studio\] No feature was open, so a new one was started for this work, called "Add a footer"\.\n\n\[studio\] Build mode/);
+    assert.equal(t.withEnv(() => read(t.app)).feature.name, 'Add a footer');
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test('a preview note comes before the mode, and starts nothing', async () => {
+  const t = versionsSetup();
+  try {
+    preview(t.app, 'v1');
+    setMode(t.app, 'ask');
+    assert.match(t.hook('prompt-submit', { prompt: 'Look' }).stdout, /^\[studio\] She is previewing v1/);
+    fs.writeFileSync(path.join(t.app, 'page.html'), 'changed\n');
+    t.hook('stop', { last_assistant_message: 'Looked.' });
+    assert.equal(git(t.app, 'status', '--porcelain'), '', 'the Ask turn is put back during a preview too');
+    endPreview(t.app);
   } finally {
     await t.cleanup();
   }
