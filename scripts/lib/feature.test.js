@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { bringBack, discard, endPreview, goBack, keep, lastReply, nameFromPrompt, preview, read, readMode, restore, runGate, setMode, stateDir, summarise, turnLabel, versions } = require('./feature');
+const { bringBack, discard, endPreview, goBack, keep, lastReply, nameFromPrompt, preview, read, readMode, restore, restoreData, runGate, setMode, snapshotData, stateDir, summarise, turnLabel, versions } = require('./feature');
 
 const SCRIPT = path.join(__dirname, 'feature.js');
 const IDENTITY = { GIT_AUTHOR_NAME: 'Her', GIT_AUTHOR_EMAIL: 'her@example.com', GIT_COMMITTER_NAME: 'Her', GIT_COMMITTER_EMAIL: 'her@example.com' };
@@ -490,6 +490,62 @@ test('Discard: develop back to main, new files gone, data/ as it was at the star
     assert.equal(remoteSha(t.origin, 'main'), v1);
     assert.equal(tagObject(t.origin, 'v1'), v1Tag);
   } finally {
+    await t.cleanup();
+  }
+});
+
+/** A process holding an SQLite database open, as the app's dev server does: `add <text>` inserts a row, `list` answers the rows. */
+const dbHolder = (file) => {
+  const script = `const db = new (require('node:sqlite').DatabaseSync)(process.argv[1]);
+require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
+  if (line.startsWith('add ')) { db.prepare('INSERT INTO items VALUES (?)').run(line.slice(4)); console.log('[]'); }
+  else console.log(JSON.stringify(db.prepare('SELECT text FROM items').all().map((row) => row.text)));
+});`;
+  const child = require('node:child_process').spawn(process.execPath, ['-e', script, file], { stdio: ['pipe', 'pipe', 'inherit'] });
+  const waiting = [];
+  let buffered = '';
+  child.stdout.on('data', (chunk) => {
+    buffered += chunk;
+    for (let at; (at = buffered.indexOf('\n')) >= 0; buffered = buffered.slice(at + 1)) waiting.shift()(JSON.parse(buffered.slice(0, at)));
+  });
+  const ask = (line) => new Promise((resolve) => waiting.push(resolve) && child.stdin.write(`${line}\n`));
+  return { ask, stop: () => child.kill() };
+};
+
+const dbRows = (file) => {
+  const db = new (require('node:sqlite').DatabaseSync)(file);
+  try {
+    return db.prepare('SELECT text FROM items').all().map((row) => row.text);
+  } finally {
+    db.close();
+  }
+};
+
+test('restoreData writes an SQLite database over in place: the dev server holding it open sees the restored rows, and what it writes after is kept', async () => {
+  const t = setup();
+  const file = path.join(t.app, 'data', 'app.db');
+  fs.rmSync(file);
+  const db = new (require('node:sqlite').DatabaseSync)(file);
+  db.exec("CREATE TABLE items (text TEXT); INSERT INTO items VALUES ('at the start')");
+  db.close();
+  fs.writeFileSync(path.join(t.app, 'data', 'notes.txt'), 'start');
+  t.withEnv(() => snapshotData(t.app, 'base'));
+  const holder = dbHolder(file);
+  try {
+    await holder.ask('add during the feature');
+    fs.writeFileSync(path.join(t.app, 'data', 'notes.txt'), 'changed');
+    fs.writeFileSync(path.join(t.app, 'data', 'added.txt'), 'new');
+    assert.deepEqual(await holder.ask('list'), ['at the start', 'during the feature']);
+
+    t.withEnv(() => restoreData(t.app, 'base'));
+    assert.deepEqual(await holder.ask('list'), ['at the start'], 'the open connection sees the restored rows');
+    await holder.ask('add after the restore');
+    assert.deepEqual(dbRows(file), ['at the start', 'after the restore'], 'a write after the restore reaches the file on disk');
+    assert.deepEqual(fs.readdirSync(path.join(t.app, 'data')).sort(), ['app.db', 'logs', 'notes.txt']);
+    assert.equal(fs.readFileSync(path.join(t.app, 'data', 'notes.txt'), 'utf8'), 'start');
+    assert.equal(fs.readFileSync(path.join(t.app, 'data', 'logs', 'dev.log'), 'utf8'), 'log');
+  } finally {
+    holder.stop();
     await t.cleanup();
   }
 });

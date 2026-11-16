@@ -9,6 +9,8 @@
 #   studio   the cockpit's server (scripts/lib/studio-server.js)
 #   app      the app's dev server (npm run dev, on the app's port, 4001)
 #   whisper  whisper-server, which turns the cockpit's dictation into text (on 127.0.0.1:8178)
+#   reaper   keeps Claude running: when it has died, starts it again in the claude tab with --continue (claude-reaper.sh keep),
+#            and the chat says "Reconnected"
 # A tab that is running is left alone, so running `studio up` again reuses the workspace. A tab left at its
 # shell prompt (its command exited, or herdr restored it after a restart) runs its command again. After an
 # update the studio tab is restarted, so the new server code is the one running.
@@ -59,7 +61,7 @@ has_conversation && CLAUDE="$CLAUDE --continue"
 CLAUDE="${STUDIO_CLAUDE_CMD:-$CLAUDE}"
 
 # Each tab: its label, the folder it starts in and its command.
-TABS="claude studio app whisper"
+TABS="claude studio app whisper reaper"
 tab_cwd() { [ "$1" = studio ] && echo "$STUDIO_DIR" || echo "$APP_DIR"; }
 tab_command() {
   case "$1" in
@@ -71,6 +73,8 @@ tab_command() {
       elif [ ! -f "$WHISPER_MODEL" ]; then echo "echo $(q "Dictation is off: there is no Whisper model at $WHISPER_MODEL.")"
       else echo "whisper-server -m $(q "$WHISPER_MODEL") --host 127.0.0.1 --port $STUDIO_WHISPER_PORT --convert"
       fi ;;
+    # It starts Claude the way this script does, so it gets the stand-in for it too.
+    reaper) echo "${STUDIO_CLAUDE_CMD:+STUDIO_CLAUDE_CMD=$(q "$STUDIO_CLAUDE_CMD") }$(q "$STUDIO_DIR/scripts/claude-reaper.sh") keep $(q "$WORKSPACE") $(q "$APP_DIR")" ;;
   esac
 }
 tab_port() {

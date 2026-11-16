@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { artifactIdOf, isPlainClick, localArtifactUrl } from './artifacts'
 
 describe('artifactIdOf', () => {
@@ -15,8 +15,14 @@ describe('artifactIdOf', () => {
 })
 
 describe('localArtifactUrl and isPlainClick', () => {
-  it('points every artifact at one host-independent local URL', () => {
+  it('points every artifact at one host-independent local URL, on the studio server the page came from', () => {
     expect(localArtifactUrl('AbC123')).toBe('http://localhost:4000/_env/artifact/AbC123/')
+    vi.stubGlobal('location', { origin: 'http://localhost:4240' })
+    try {
+      expect(localArtifactUrl('AbC123', 2)).toBe('http://localhost:4240/_env/artifact/AbC123/v2/')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('treats only an unmodified left click as plain', () => {

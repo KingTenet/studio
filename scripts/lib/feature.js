@@ -161,14 +161,64 @@ const snapshotData = (appDir, sha) => {
   return to;
 };
 
-/** Puts the app's data/ back as a snapshot has it: everything in it but logs/ is removed, then the snapshot copied in. */
+const SQLITE_HEADER = Buffer.from('SQLite format 3\0');
+const SQLITE_SIDECARS = ['-journal', '-wal', '-shm'];
+
+/** Whether a file is an SQLite database (by its first 16 bytes). */
+const isSqlite = (file) => {
+  try {
+    const head = Buffer.alloc(SQLITE_HEADER.length);
+    const fd = fs.openSync(file, 'r');
+    try {
+      fs.readSync(fd, head, 0, head.length, 0);
+    } finally {
+      fs.closeSync(fd);
+    }
+    return head.equals(SQLITE_HEADER);
+  } catch {
+    return false;
+  }
+};
+
+/** Every file under dir, as paths relative to it. */
+const filesUnder = (dir, prefix = '') =>
+  fs.readdirSync(path.join(dir, prefix), { withFileTypes: true }).flatMap((entry) => {
+    const relative = path.join(prefix, entry.name);
+    return entry.isDirectory() ? filesUnder(dir, relative) : [relative];
+  });
+
+// Copies each SQLite database (pairs of from, to) over the one at `to` with SQLite's backup, in a child since node:sqlite's backup is async.
+const SQLITE_COPY = `const { DatabaseSync, backup } = require('node:sqlite');
+(async () => { const pairs = process.argv.slice(1);
+  for (let i = 0; i < pairs.length; i += 2) { const db = new DatabaseSync(pairs[i]); try { await backup(db, pairs[i + 1]); } finally { db.close(); } } })()
+  .catch((error) => { console.error(error.message); process.exit(1); });`;
+
+/**
+ * Puts the app's data/ back as a snapshot has it: everything in it but logs/ is removed, then the snapshot copied in.
+ * An SQLite database that both have is written over in place, with SQLite's own backup, rather than deleted and copied:
+ * the app's dev server holds it open, and would otherwise keep reading and writing the deleted file, so what she did in
+ * the app afterwards would be lost. Done this way, the server's connection sees the restored data at its next query.
+ */
 const restoreData = (appDir, sha) => {
   const from = path.join(files(appDir).snapshots, sha);
   if (!fs.existsSync(from)) throw new Error(`there is no snapshot of the app's data for ${sha.slice(0, 7)}`);
   const to = path.join(appDir, 'data');
   fs.mkdirSync(to, { recursive: true });
-  for (const name of fs.readdirSync(to)) if (name !== 'logs') fs.rmSync(path.join(to, name), { recursive: true, force: true });
-  fs.cpSync(from, to, { recursive: true, mode: fs.constants.COPYFILE_FICLONE });
+  const inPlace = filesUnder(from).filter((file) => isSqlite(path.join(from, file)) && isSqlite(path.join(to, file)));
+  // Those databases, and their journals (a live one may be mid-write), stay; so do the folders holding them.
+  const keep = new Set(inPlace.flatMap((file) => [file, ...SQLITE_SIDECARS.map((suffix) => file + suffix)]));
+  const holds = (dir) => [...keep].some((file) => file.startsWith(dir + path.sep));
+  const clear = (prefix) => {
+    for (const name of fs.readdirSync(path.join(to, prefix))) {
+      const relative = path.join(prefix, name);
+      if (relative === 'logs' || keep.has(relative)) continue;
+      if (holds(relative)) clear(relative);
+      else fs.rmSync(path.join(to, relative), { recursive: true, force: true });
+    }
+  };
+  clear('');
+  fs.cpSync(from, to, { recursive: true, mode: fs.constants.COPYFILE_FICLONE, filter: (source) => !keep.has(path.relative(from, source)) });
+  if (inPlace.length) execFileSync(process.execPath, ['-e', SQLITE_COPY, ...inPlace.flatMap((file) => [path.join(from, file), path.join(to, file)])], { stdio: ['ignore', 'ignore', 'pipe'], timeout: 60_000 });
 };
 
 /**

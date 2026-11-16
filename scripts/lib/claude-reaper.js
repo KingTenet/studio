@@ -4,7 +4,8 @@
  * Stops Claude Code sessions that have sat idle in herdr, so they stop holding memory (a session plus
  * its LSP's tsserver is often 1–2 GB), while keeping them one keypress from coming back.
  *
- * Usage: claude-reaper.sh watch [--dry-run]   # every 60s, in the infra stack's Reaper tab
+ * Usage: claude-reaper.sh keep <workspace> <app>   # keeps the chat's Claude running: `studio up` runs this in its reaper tab
+ *        claude-reaper.sh watch [--dry-run]   # every 60s, stopping idle sessions (not run by `studio up`: one chat has nothing to free)
  *        claude-reaper.sh once [--dry-run] [--only <pane>]   # one pass, ignoring idle time
  *        claude-reaper.sh list [n]            # the last n stopped/closed sessions
  *        claude-reaper.sh resume <worktree> [session] [--watch | --message <text>]   # bring back a stopped session (the index's ⏸ chips); --watch restarts /watch-mr in it, --message sends it text
@@ -125,6 +126,23 @@ const resumeCommand = ({ argv, sessionId, cwd, shellCwd, saved = true }) => {
   const flags = flag('--permission-mode') + flag('--settings') + flag('--plugin-dir');
   const command = saved ? `claude${flags} --resume ${sessionId}` : `claude${flags}`;
   return shellCwd === cwd ? command : `cd ${shellQuote(cwd)} && ${command}`;
+};
+
+/** How long the chat's Claude must be seen gone before it is restarted, so a start or resume under way is never raced. */
+const KEEP_GRACE_MS = 15_000;
+const KEEP_SAMPLE_MS = 5_000;
+
+/**
+ * What keeping the chat's Claude alive does now: 'ok' (a Claude runs in the workspace), 'wait' (none has run for less than
+ * KEEP_GRACE_MS, or the claude tab is busy with something else) or 'restart' (in the claude tab's pane, at its shell prompt) or
+ * 'create' (the claude tab is gone), with when it was first seen gone (`since`, null while one runs).
+ */
+const keepAction = ({ since, now, claudeRunning, tab }) => {
+  if (claudeRunning) return { action: 'ok', since: null };
+  const goneSince = since ?? now;
+  if (now - goneSince < KEEP_GRACE_MS) return { action: 'wait', since: goneSince };
+  if (!tab) return { action: 'create', since: goneSince };
+  return { action: tab.atPrompt ? 'restart' : 'wait', since: goneSince };
 };
 
 /** pid -> child pids, from one `ps` call. */
@@ -395,6 +413,56 @@ const startWorktree = (worktreePath, message = null) => {
   console.log(`Started Claude in ${pane}`);
 };
 
+const reconnectedPath = () => path.join(reaperDir(), 'reconnected.json');
+
+/** When the keeper last restarted the chat's Claude ({ at, paneId }), for the chat's "Reconnected"; null if it never has. */
+const readReconnected = () => {
+  try {
+    return JSON.parse(fs.readFileSync(reconnectedPath(), 'utf8'));
+  } catch {
+    return null;
+  }
+};
+
+/** The app's Claude command, continuing its last conversation when it has one (as `studio up` starts it); STUDIO_CLAUDE_CMD stands in for it. */
+const chatCommand = (appDir) => {
+  if (process.env.STUDIO_CLAUDE_CMD) return process.env.STUDIO_CLAUDE_CMD;
+  const transcripts = path.join(claudeProjectsDir(), appDir.replace(/[^A-Za-z0-9]/g, '-'));
+  const hasConversation = fs.existsSync(transcripts) && fs.readdirSync(transcripts).some((name) => name.endsWith('.jsonl'));
+  return claudeCommand() + (hasConversation ? ' --continue' : '');
+};
+
+/**
+ * One look at the studio's workspace (labelled `workspaceLabel`): when no Claude has run in it for KEEP_GRACE_MS, Claude is started
+ * again with --continue in the claude tab's pane, or in a new claude tab if that was closed, marked as the chat's (STUDIO_ROLE=chat),
+ * and the restart is noted for the chat to show "Reconnected". Returns the `since` to pass to the next look.
+ */
+const keepOnce = (since, { workspaceLabel, appDir, now = Date.now() }) => {
+  const workspace = herdr('workspace', 'list').result.workspaces.find((candidate) => candidate.label === workspaceLabel);
+  if (!workspace) return null;
+  const panes = herdr('pane', 'list', '--workspace', workspace.workspace_id).result.panes;
+  const info = (pane) => herdr('pane', 'process-info', '--pane', pane.pane_id).result.process_info;
+  const claudeRunning = panes.some((pane) => claudeProcess(info(pane)));
+  const tabId = herdr('tab', 'list', '--workspace', workspace.workspace_id).result.tabs.find((candidate) => candidate.label === 'claude')?.tab_id;
+  const pane = tabId && panes.find((candidate) => candidate.tab_id === tabId);
+  const tab = pane ? { paneId: pane.pane_id, atPrompt: (({ foreground_process_group_id: group, shell_pid: shell }) => Boolean(shell) && group === shell)(info(pane)) } : null;
+  const next = keepAction({ since, now, claudeRunning, tab });
+  if (next.action !== 'restart' && next.action !== 'create') return next.since;
+  let paneId = tab?.paneId;
+  if (next.action === 'restart') {
+    // Whatever is typed at the prompt (a stopped session's `claude --resume …`) goes first.
+    run('herdr', ['pane', 'send-keys', paneId, 'C-c']);
+  } else {
+    const env = ['STUDIO_DIR', 'STUDIO_HOME', 'STUDIO_PORT', 'STUDIO_WHISPER_PORT'].filter((name) => process.env[name]).map((name) => `${name}=${process.env[name]}`);
+    paneId = herdr('tab', 'create', '--workspace', workspace.workspace_id, '--cwd', appDir, '--label', 'claude', '--no-focus', ...[...env, 'STUDIO_ROLE=chat'].flatMap((pair) => ['--env', pair])).result.root_pane.pane_id;
+  }
+  run('herdr', ['pane', 'run', paneId, chatCommand(appDir)]);
+  fs.mkdirSync(reaperDir(), { recursive: true });
+  fs.writeFileSync(reconnectedPath(), JSON.stringify({ at: new Date(now).toISOString(), paneId }));
+  console.error(`${new Date(now).toISOString()} Claude wasn't running, so it was started again in ${paneId}`);
+  return null;
+};
+
 /** Stops offering a stopped session to resume: logs it dismissed, in its worktree. Its transcript stays, so `claude --resume` still finds it. */
 const dismiss = (sessionId) => {
   const stopped = readClosed().findLast((record) => record.session_id === sessionId && record.how !== 'dismissed');
@@ -440,13 +508,27 @@ const main = async () => {
     dismiss(rest[0]);
     return;
   }
+  if (mode === 'keep') {
+    const [workspaceLabel, appDir] = rest;
+    if (!workspaceLabel || !appDir) throw new Error('usage: claude-reaper.sh keep <workspace> <app>');
+    console.error(`Keeping the chat's Claude running in workspace ${workspaceLabel}, for ${appDir}`);
+    let since = null;
+    for (;;) {
+      try {
+        since = keepOnce(since, { workspaceLabel, appDir: path.resolve(appDir) });
+      } catch (error) {
+        console.error(`${new Date().toISOString()} look failed: ${error.message}`);
+      }
+      await sleep(KEEP_SAMPLE_MS);
+    }
+  }
   if (mode === 'once') {
     const onlyAt = rest.indexOf('--only');
     await reapOnce({}, { dryRun, ignoreIdleTime: true, only: onlyAt >= 0 ? rest[onlyAt + 1] : null });
     return;
   }
   if (mode !== 'watch') {
-    throw new Error('usage: claude-reaper.sh watch|once [--dry-run] | list [n]');
+    throw new Error('usage: claude-reaper.sh keep <workspace> <app> | watch|once [--dry-run] | list [n]');
   }
   console.error(`Reaper: stopping Claude panes idle ${idleThresholdMs() / 60_000} min, checking every ${SAMPLE_MS / 1000}s${dryRun ? ' (dry run)' : ''}`);
   let idle = {};
@@ -467,4 +549,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { COMMAND_SHELL_MARKER, notePaneSession, withRealSessions, claudeCommand, closedLogPath, commandText, pausedSessions, processTree, runningCommands, readClosed, reapAction, resumeCommand, trackIdle, typedInput };
+module.exports = { COMMAND_SHELL_MARKER, KEEP_GRACE_MS, keepAction, keepOnce, readReconnected, notePaneSession, withRealSessions, claudeCommand, closedLogPath, commandText, pausedSessions, processTree, runningCommands, readClosed, reapAction, resumeCommand, trackIdle, typedInput };

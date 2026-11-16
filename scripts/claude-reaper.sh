@@ -2,7 +2,8 @@
 # Stops Claude Code sessions that have sat idle in herdr, leaving `claude --resume <id>` typed at the
 # pane's prompt, and logs them for the index's Resume button. Details: lib/claude-reaper.js.
 #
-# Usage: claude-reaper.sh watch [--dry-run]   # every 60s; the infra stack's Reaper tab runs this
+# Usage: claude-reaper.sh keep <workspace> <app>   # restarts the chat's Claude (--continue) when it has died; studio up's reaper tab runs this
+#        claude-reaper.sh watch [--dry-run]   # every 60s, stopping idle sessions (studio up doesn't run it)
 #        claude-reaper.sh once [--dry-run] [--only <pane>]   # one pass, treating idle panes as past the limit
 #        claude-reaper.sh list [n]            # the last n stopped/closed sessions
 #        claude-reaper.sh resume <worktree> [session]   # bring back a stopped session

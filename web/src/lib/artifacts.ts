@@ -3,8 +3,12 @@ const ARTIFACT_URL = /^https:\/\/claude\.ai\/(?:code\/)?artifact\/([A-Za-z0-9_-]
 /** The artifact id in a claude.ai artifact URL (either form), or null for any other URL. */
 export const artifactIdOf = (url: string) => ARTIFACT_URL.exec(url)?.[1] ?? null
 
-/** An artifact's local URL: its newest local copy, served by the studio server, or a redirect to claude.ai when there is none. */
-export const localArtifactUrl = (id: string, version?: number) => 'http://localhost:4000/_env/artifact/' + id + '/' + (version ? 'v' + version + '/' : '')
+/**
+ * An artifact's local URL: its newest local copy, served by the studio server, or a redirect to claude.ai when there is none.
+ * The server is the one serving the cockpit (STUDIO_PORT), so it is the page's own origin; localhost:4000 outside a page.
+ */
+export const localArtifactUrl = (id: string, version?: number) =>
+  (typeof location === 'undefined' ? 'http://localhost:4000' : location.origin) + '/_env/artifact/' + id + '/' + (version ? 'v' + version + '/' : '')
 
 /** A plain left click, which a page may handle itself; modified and middle clicks open a tab, as links do. */
 export const isPlainClick = (event: { button: number; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }) =>

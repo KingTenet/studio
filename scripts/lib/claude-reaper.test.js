@@ -2,9 +2,10 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 
-const { claudeCommand, commandText, notePaneSession, pausedSessions, processTree, runningCommands, reapAction, resumeCommand, trackIdle, typedInput, withRealSessions } = require('./claude-reaper');
+const { KEEP_GRACE_MS, claudeCommand, commandText, keepAction, keepOnce, notePaneSession, readReconnected, pausedSessions, processTree, runningCommands, reapAction, resumeCommand, trackIdle, typedInput, withRealSessions } = require('./claude-reaper');
 
 const MIN = 60_000;
 const THRESHOLD = 10 * MIN;
@@ -212,4 +213,86 @@ test("withRealSessions: a pane's recorded session wins over herdr's; one noted a
   // A pane with no Claude in it is left as herdr has it.
   assert.deepEqual(withRealSessions([{ pane_id: 'w1:p2', agent: null }], dir), [{ pane_id: 'w1:p2', agent: null }]);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('keepAction: Claude running is fine; gone for the grace period restarts it in the claude tab at its prompt, or makes the tab again', () => {
+  const tab = { paneId: 'w1:p1', atPrompt: true };
+  assert.deepEqual(keepAction({ since: 5, now: 100, claudeRunning: true, tab }), { action: 'ok', since: null });
+  assert.deepEqual(keepAction({ since: null, now: 100, claudeRunning: false, tab }), { action: 'wait', since: 100 });
+  assert.deepEqual(keepAction({ since: 100, now: 100 + KEEP_GRACE_MS - 1, claudeRunning: false, tab }).action, 'wait');
+  assert.deepEqual(keepAction({ since: 100, now: 100 + KEEP_GRACE_MS, claudeRunning: false, tab }), { action: 'restart', since: 100 });
+  // Something else runs in the tab (a command typed there by hand): left alone.
+  assert.equal(keepAction({ since: 100, now: 100 + KEEP_GRACE_MS, claudeRunning: false, tab: { ...tab, atPrompt: false } }).action, 'wait');
+  assert.equal(keepAction({ since: 100, now: 100 + KEEP_GRACE_MS, claudeRunning: false, tab: null }).action, 'create');
+});
+
+test("keepOnce: against a stand-in herdr, a dead chat is started again with --continue in its pane (or a new claude tab marked STUDIO_ROLE=chat), and noted as reconnected", () => {
+  const root = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'studio-keep-'));
+  const app = path.join(root, 'my-app');
+  const projects = path.join(root, 'projects');
+  fs.mkdirSync(path.join(projects, app.replace(/[^A-Za-z0-9]/g, '-')), { recursive: true });
+  fs.writeFileSync(path.join(projects, app.replace(/[^A-Za-z0-9]/g, '-'), 's1.jsonl'), '{}\n');
+  const world = path.join(root, 'world.json');
+  const calls = path.join(root, 'calls.log');
+  fs.mkdirSync(path.join(root, 'bin'));
+  // herdr as keepOnce uses it: the workspace, its tabs and panes, each pane's foreground, and the calls that act.
+  fs.writeFileSync(
+    path.join(root, 'bin', 'herdr'),
+    `#!/usr/bin/env node
+const fs = require('node:fs');
+const world = JSON.parse(fs.readFileSync(${JSON.stringify(world)}, 'utf8'));
+const args = process.argv.slice(2);
+const out = (result) => console.log(JSON.stringify({ result }));
+const key = args.slice(0, 2).join(' ');
+if (key === 'workspace list') out({ workspaces: [{ workspace_id: 'w1', label: 'studio-test' }] });
+else if (key === 'tab list') out({ tabs: world.tabs });
+else if (key === 'pane list') out({ panes: world.panes });
+else if (key === 'pane process-info') out({ process_info: world.info[args[3]] });
+else if (key === 'tab create') { fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + '\\n'); out({ root_pane: { pane_id: 'w1:p9' }, tab: { tab_id: 'w1:t9' } }); }
+else fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + '\\n');
+`,
+    { mode: 0o755 }
+  );
+  const saved = { PATH: process.env.PATH, STUDIO_REAPER_DIR: process.env.STUDIO_REAPER_DIR, STUDIO_REAPER_CLAUDE_PROJECTS: process.env.STUDIO_REAPER_CLAUDE_PROJECTS, STUDIO_CLAUDE_CMD: process.env.STUDIO_CLAUDE_CMD };
+  Object.assign(process.env, { PATH: `${path.join(root, 'bin')}:${process.env.PATH}`, STUDIO_REAPER_DIR: path.join(root, 'reaper'), STUDIO_REAPER_CLAUDE_PROJECTS: projects });
+  delete process.env.STUDIO_CLAUDE_CMD;
+  const write = (value) => fs.writeFileSync(world, JSON.stringify(value));
+  const logged = () => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim().split('\n').map((line) => JSON.parse(line)) : []);
+  const opts = (now) => ({ workspaceLabel: 'studio-test', appDir: app, now });
+  try {
+    const tabs = [{ tab_id: 'w1:t1', label: 'claude' }, { tab_id: 'w1:t2', label: 'app' }];
+    const panes = [{ pane_id: 'w1:p1', tab_id: 'w1:t1' }, { pane_id: 'w1:p2', tab_id: 'w1:t2' }];
+    const claude = { shell_pid: 10, foreground_process_group_id: 11, foreground_processes: [{ pid: 11, argv0: 'claude', argv: ['claude'] }] };
+    const atPrompt = { shell_pid: 10, foreground_process_group_id: 10, foreground_processes: [{ pid: 10, name: 'zsh' }] };
+    const dev = { shell_pid: 20, foreground_process_group_id: 21, foreground_processes: [{ pid: 21, name: 'npm' }] };
+
+    write({ tabs, panes, info: { 'w1:p1': claude, 'w1:p2': dev } });
+    assert.equal(keepOnce(null, opts(1000)), null);
+    assert.deepEqual(logged(), []);
+
+    write({ tabs, panes, info: { 'w1:p1': atPrompt, 'w1:p2': dev } });
+    const since = keepOnce(null, opts(2000));
+    assert.equal(since, 2000, 'just died: waits');
+    assert.deepEqual(logged(), []);
+    assert.equal(readReconnected(), null);
+    assert.equal(keepOnce(since, opts(2000 + KEEP_GRACE_MS)), null);
+    const command = `${claudeCommand()} --continue`;
+    assert.deepEqual(logged(), [['pane', 'send-keys', 'w1:p1', 'C-c'], ['pane', 'run', 'w1:p1', command]]);
+    assert.deepEqual(readReconnected(), { at: new Date(2000 + KEEP_GRACE_MS).toISOString(), paneId: 'w1:p1' });
+
+    fs.rmSync(calls);
+    write({ tabs: tabs.slice(1), panes: panes.slice(1), info: { 'w1:p2': dev } });
+    keepOnce(keepOnce(null, opts(50_000)), opts(50_000 + KEEP_GRACE_MS));
+    const [create, start] = logged();
+    assert.deepEqual(create.slice(0, 9), ['tab', 'create', '--workspace', 'w1', '--cwd', app, '--label', 'claude', '--no-focus']);
+    assert.ok(create.join(' ').includes('--env STUDIO_ROLE=chat'), create.join(' '));
+    assert.deepEqual(start, ['pane', 'run', 'w1:p9', command]);
+    assert.equal(readReconnected().paneId, 'w1:p9');
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

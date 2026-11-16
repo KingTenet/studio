@@ -20,7 +20,7 @@ The app lives in its own repo, next to this one (`~/Studio/<app>`). Studio keeps
 studio up
 ```
 
-This updates Studio, starts its herdr workspace (Claude, the cockpit's server, the app's dev server and whisper-server for dictation, one tab each) and opens the cockpit. Running it again reuses the workspace that's already running. `studio up --dry-run` prints what each tab would run.
+This updates Studio, starts its herdr workspace (Claude, the cockpit's server, the app's dev server, whisper-server for dictation and the reaper, one tab each) and opens the cockpit. The reaper (`claude-reaper.sh keep`) starts Claude again with `--continue` when it has died, and the chat then says "Reconnected". Running it again reuses the workspace that's already running. `studio up --dry-run` prints what each tab would run.
 
 ## Layout
 
