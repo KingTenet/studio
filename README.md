@@ -14,6 +14,18 @@ The app lives in its own repo, next to this one (`~/Studio/<app>`). Studio keeps
 - `features/<app>/`: the feature being built, its checkpoints, a snapshot of the app's `data/` for each, pushes still to retry, and the chat's Ask / Plan / Build mode (`scripts/lib/feature.js`).
 - Logs, drawings, uploads and the artifact registry. Dictated clips are kept only with `"keepDictationClips": true` in `config.json`, for looking into text that came out wrong.
 
+## Set it up
+
+Once, on her Mac, from a checkout of this repo next to where her app will go (`~/Studio/studio`):
+
+```sh
+./install.sh --app my-app --collaborator <your GitHub user>
+```
+
+It installs Homebrew if needed, then herdr, Node, pnpm, `gh`, whisper-cpp (and its model, in `~/.whisper`), Claude Code and Chrome; logs into GitHub and Claude with her own accounts; lets herdr see Claude's sessions (`herdr integration install claude`); asks for her name and email for git if they aren't set; creates her app in `~/Studio/<app>` from `template/app.bundle` (versions v1 and v2, with `develop` = `main`), makes it a private GitHub repo with everything pushed and invites the collaborator; writes `~/.studio/config.json`; links `studio` into `~/.local/bin` (added to the PATH in `~/.zprofile`); and builds the cockpit. Running it again is safe: finished steps are skipped and her app and `config.json` are never written over. If her app's repo is already on GitHub (a new Mac), the app is cloned from there.
+
+`template/app.bundle` is the starter app, made from the template repo by `scripts/update-template-bundle.sh <template repo>`. Run that again after changing the template, and commit the new bundle.
+
 ## Start it
 
 ```sh
