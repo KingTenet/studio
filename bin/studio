@@ -101,6 +101,9 @@ if [ -z "${STUDIO_UPDATED:-}" ]; then
   fi
 fi
 
+# The app's develop, and anything whose push failed last time (feature.js), is pushed again in the background.
+nohup node "$STUDIO_DIR/scripts/lib/feature.js" push "$APP_DIR" >/dev/null 2>&1 &
+
 WEB="$STUDIO_DIR/web"
 PAGE="$WEB/dist/cockpit.html"
 if [ ! -f "$PAGE" ] || [ -n "$(find "$WEB/src" "$WEB/cockpit.html" "$WEB/package.json" "$WEB/pnpm-lock.yaml" "$WEB/vite.config.ts" -newer "$PAGE" -print -quit)" ]; then

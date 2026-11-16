@@ -56,6 +56,15 @@ export const reportOutcome = (id: string, what: string, met: boolean, ms: number
 export const removeArtifact = (id: string) => post('/artifacts/remove', { id })
 /** Takes away a note Claude pinned beside an element of an artifact. */
 export const unnoteArtifact = (id: string, nid: string) => post('/artifacts/unnote', { id, nid })
+/** Starts a feature by name (and clears the chat's conversation). Resolves to an error to show, or null. */
+export const startFeature = async (name: string): Promise<string | null> => {
+  try {
+    const res = await post('/feature/start', { name })
+    return res.ok ? null : (((await res.json()) as { error?: string }).error ?? 'The feature could not be started.')
+  } catch {
+    return "The studio isn't answering, so the feature could not be started."
+  }
+}
 export const setTooltips = (tooltips: boolean) => post('/prefs', { tooltips })
 /** Saves one UI setting every page shares (useSharedPref). */
 export const setUiPref = (key: string, value: unknown) => post('/prefs', { ui: { [key]: value } })

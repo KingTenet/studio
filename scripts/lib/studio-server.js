@@ -4,7 +4,8 @@
  * The studio's local server, at http://localhost:4000: it serves the cockpit page and the API behind it,
  * for one app (config.appDir) and the Claude session working on it in a herdr pane.
  *
- * The API: /_env/api/state (the app, its Claude pane and the shared prefs), the chat (session, session/send),
+ * The API: /_env/api/state (the app, its Claude pane, the feature being built and the shared prefs), feature/start,
+ * the chat (session, session/send),
  * artifacts (list, serve, remove, unnote, artifact-shot), Draw and dropped files (drawing, upload),
  * dictation (listener, transcribe, dictation-log, vad/) and jobs (run: start or resume Claude, rebuild the artifact index).
  *
@@ -28,6 +29,7 @@ const { COMMAND_SHELL_MARKER, pausedSessions, processTree, readClosed, runningCo
 const { describe: describeArtifacts, folderFor: artifactFolder, locate: locateArtifact, remove: removeArtifacts, removeNote: removeArtifactNote } = require('./artifacts');
 const { paneInput, panePrompt, readTranscript, sessionTitle, transcriptPath } = require('./session-view');
 const { read: readSummary } = require('./summary');
+const { pushInBackground, read: readFeature, start: startFeature } = require('./feature');
 
 const SCRIPTS = path.resolve(__dirname, '..');
 const WEB_DIST = path.resolve(SCRIPTS, '..', 'web', 'dist');
@@ -1079,6 +1081,7 @@ const state = () => {
       tabs: artifacts ? { artifacts } : {},
       agents: appAgents(snapshot, app.dir, agentCommands(snapshot)).map((agent) => ({ ...agent, title: sessionTitle(agent.sessionId), active: lastActive(agent.sessionId) })),
       paused: pausedOffers(readClosed(), app.dir, runningSessions, livePanes).map((record) => ({ ...record, title: sessionTitle(record.sessionId), active: lastActive(record.sessionId) })),
+      ...readFeature(app.dir),
     },
     prefs: { tooltips: config.prefs?.tooltips !== false, ui: mergeUiPrefs(config.prefs?.ui) },
   };
@@ -1142,6 +1145,39 @@ const runJob = async (req, res) => {
     return;
   }
   streamJob(res, LABEL, script, appInfo().dir);
+};
+
+/**
+ * Starts a feature by name (feature.js start: develop reset to main, data/ snapshotted), pushes develop and runs
+ * /clear in the chat's Claude pane, so the feature's conversation starts afresh. Refused while Claude is working or
+ * waiting on a prompt, since /clear would be typed into that.
+ */
+const startFeatureNow = async (req, res) => {
+  const { name } = JSON.parse(await readBody(req));
+  if (typeof name !== 'string' || !name.trim() || name.length > 80 || /\n/.test(name)) {
+    sendJson(res, 400, { error: 'Give the feature a short name, on one line.' });
+    return;
+  }
+  const appDir = appInfo().dir;
+  const chat = appAgents(herdrSnapshot(), appDir).find((agent) => agent.tab !== 'Artifacts');
+  if (chat && (chat.status === 'working' || chat.status === 'blocked')) {
+    sendJson(res, 409, { error: chat.status === 'working' ? 'Claude is working. Start the feature once it has finished.' : 'Claude is waiting on a question. Answer it first.' });
+    return;
+  }
+  let feature;
+  try {
+    feature = startFeature(appDir, name);
+  } catch (error) {
+    sendJson(res, 409, { error: error.message });
+    return;
+  }
+  pushInBackground(appDir);
+  if (chat) {
+    execFileSync('herdr', ['pane', 'run', chat.paneId, '/clear'], { stdio: 'ignore', timeout: 5000 });
+    // Time for /clear to run, so a message sent next goes to the cleared conversation and not into the input box beside it.
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  sendJson(res, 200, feature);
 };
 
 // --- the cockpit page and the API --------------------------------------------------------
@@ -1399,6 +1435,11 @@ const handle = async (req, res) => {
     mkdirSync(path.dirname(ACTIONS_LOG), { recursive: true });
     appendFileSync(ACTIONS_LOG, JSON.stringify({ ts: new Date().toISOString(), id: String(id), outcome: met ? 'met' : 'timeout', what: String(what).slice(0, 200), ms: Number(ms) }) + '\n');
     res.writeHead(204).end();
+    return;
+  }
+  if (req.method === 'POST' && url.pathname === '/_env/api/feature/start') {
+    if (needsJobHeader(req, res)) return;
+    await startFeatureNow(req, res);
     return;
   }
   if (req.method === 'POST' && url.pathname === '/_env/api/run') {

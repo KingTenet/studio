@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { plural } from '@/lib/format'
 import type { App } from '@/lib/types'
 import { cn } from 'cn'
+import { FeaturePanel } from './FeaturePanel'
 import type { SidePane } from './PaneLayout'
 import { CloseButton, PinButton } from './useAutoHide'
 
@@ -67,7 +68,7 @@ export const Rail = ({ w, pane }: RailProps) => {
         </Button>
       </header>
       <Section icon={<GitCommitVertical className="size-3.5" />} title="Feature">
-        <p className="text-sm text-muted-foreground">No feature in progress.</p>
+        <FeaturePanel feature={w?.feature} />
       </Section>
       <Section icon={<History className="size-3.5" />} title="Versions">
         <p className="text-sm text-muted-foreground">The versions you keep will be listed here.</p>

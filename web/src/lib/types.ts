@@ -18,6 +18,19 @@ export type PausedSession = { sessionId: string; ts: string; how: string; by: 'r
 /** A herdr tab a button started: its state is `idle`, `running` or `claude-<status>` (tabState in studio-server.js). */
 export type ButtonTab = { tabId: string; state: string }
 
+/** A commit on develop made after a Build turn that changed files (feature.js). */
+export type Checkpoint = {
+  sha: string
+  /** The reply's `Checkpoint:` line, else its first sentence. */
+  label: string
+  /** What she asked for in that turn. */
+  prompt: string
+  at: string
+}
+
+/** The feature being built: develop, from main at `base`, with a checkpoint per Build turn that changed files. */
+export type Feature = { name: string; startedAt: string; base: string; checkpoints: Checkpoint[] }
+
 /** The app being built, its Claude sessions and what its buttons started, as /_env/api/state reports them. */
 export type App = {
   /** Its folder. */
@@ -32,6 +45,10 @@ export type App = {
   tabs: Record<string, ButtonTab>
   agents: Agent[]
   paused: PausedSession[]
+  /** The feature being built, or null when none is open. */
+  feature: Feature | null
+  /** Branches whose last push failed, tried again with the next commit. */
+  unpushed: string[]
 }
 
 export type ControlState = {

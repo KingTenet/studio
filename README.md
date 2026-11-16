@@ -11,6 +11,7 @@ Studio runs in the browser at http://localhost:4000. The page has three columns:
 The app lives in its own repo, next to this one (`~/Studio/<app>`). Studio keeps its own state in `~/.studio`:
 
 - `config.json`: the app's folder and name, and the cockpit's settings.
+- `features/<app>/`: the feature being built, its checkpoints, a snapshot of the app's `data/` for each, and pushes still to retry (`scripts/lib/feature.js`).
 - Logs, drawings, uploads and the artifact registry. Dictated clips are kept only with `"keepDictationClips": true` in `config.json`, for looking into text that came out wrong.
 
 ## Start it
@@ -25,6 +26,7 @@ This updates Studio, starts its herdr workspace (Claude, the cockpit's server, t
 
 - `bin/studio`: the `studio up` command.
 - `scripts/lib/studio-server.js`: the local server behind the page. It serves the cockpit and the API for chat, artifacts, drawing, uploads, dictation and jobs.
+- `scripts/lib/feature.js`: features and checkpoints. The app's repo has `main` (the versions kept) and `develop` (the feature being built). Starting a feature resets `develop` to `main`; after every turn that changed files, the Stop hook commits a checkpoint on `develop`, labelled from the reply's `Checkpoint:` line, snapshots `data/` and pushes in the background (a failed push is retried with the next one and by `studio up`).
 - `scripts/`: the jobs the cockpit's buttons run (start or resume Claude, rebuild the artifact index, write the summary) and `cc-command.sh` (slash commands queued for the pane).
 - `web/`: the cockpit page (React, built into a single `web/dist/cockpit.html`).
 - `hooks/studio-hook.py`: Claude Code hooks that tell the cockpit which session a pane runs and pass on what the page showed.

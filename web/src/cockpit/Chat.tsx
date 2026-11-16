@@ -16,6 +16,7 @@ import { parseMarkdown, type Inline as InlinePart } from '@/lib/markdown'
 import { resolveQueue, type ChatMessage } from '@/lib/queue'
 import type { Agent, AgentStatus, App, SessionPrompt } from '@/lib/types'
 import { cn } from 'cn'
+import { StartFeature } from './FeaturePanel'
 import { useDictation } from './MicButton'
 import { CloseButton, PinButton } from './useAutoHide'
 import { useSession, type ChatView } from './useSession'
@@ -416,6 +417,8 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null)
   // A message on its way: shown faded until the transcript has more messages than when it was sent.
   const [sending, setSending] = useState<{ paneId: string; text: string; count: number } | null>(null)
+  // A message sent with no feature open waits here while she names one; it is sent once the feature has started.
+  const [naming, setNaming] = useState<string | null>(null)
   // Files dropped on the chat (a screenshot's thumbnail, anything from Finder): copied to the studio server as they land, since
   // the page can't know where they live, and their copies' paths go with the next message.
   const [dropped, setDropped] = useState<Dropped[]>([])
@@ -602,8 +605,20 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
       return
     }
     if (!agent) return
+    if (w?.feature === null) {
+      setText(message)
+      setNaming(message)
+      return
+    }
     setText('')
     await deliver(agent.paneId, message)
+  }
+  const startedFeature = () => {
+    const message = naming
+    setNaming(null)
+    if (!agent || !message) return
+    setText('')
+    void deliver(agent.paneId, message)
   }
   // Arrived once the transcript has more messages than when it was sent, or (as a long transcript re-read keeps only its
   // last 200, which can be fewer than that) once it shows this message.
@@ -879,6 +894,7 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
               ))}
             </div>
           )}
+          {naming !== null && <StartFeature hint="Changes are made as part of a feature. Name this one to start it; your message is sent once it has started." autoFocus onStarted={startedFeature} onCancel={() => setNaming(null)} />}
           <Textarea
             ref={messageBox}
             aria-label="Message the selected session"

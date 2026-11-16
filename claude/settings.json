@@ -30,6 +30,11 @@
             "type": "command",
             "command": "python3 -I \"$STUDIO_DIR/hooks/studio-hook.py\" prompt-submit",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "[ -z \"$STUDIO_DIR\" ] || node \"$STUDIO_DIR/scripts/lib/feature.js\" prompt-submit",
+            "timeout": 30
           }
         ]
       }
@@ -53,6 +58,11 @@
             "type": "command",
             "command": "bash \"$STUDIO_DIR/scripts/cc-command.sh\" flush",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "[ -z \"$STUDIO_DIR\" ] || node \"$STUDIO_DIR/scripts/lib/feature.js\" stop",
+            "timeout": 30
           }
         ]
       }
