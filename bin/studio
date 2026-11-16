@@ -8,6 +8,7 @@
 #            continuing the app's last conversation if it has one
 #   studio   the cockpit's server (scripts/lib/studio-server.js)
 #   app      the app's dev server (npm run dev, on the app's port, 4001)
+#   whisper  whisper-server, which turns the cockpit's dictation into text (on 127.0.0.1:8178)
 # A tab that is running is left alone, so running `studio up` again reuses the workspace. A tab left at its
 # shell prompt (its command exited, or herdr restored it after a restart) runs its command again. After an
 # update the studio tab is restarted, so the new server code is the one running.
@@ -15,7 +16,8 @@
 # Usage: studio up [--dry-run]   # --dry-run prints what each tab would run and changes nothing
 #
 # Environment: STUDIO_HOME (default ~/.studio, holding config.json with the app's appDir and appPort),
-# STUDIO_PORT (the cockpit's port, default 4000), STUDIO_WORKSPACE (the workspace's label, default studio),
+# STUDIO_PORT (the cockpit's port, default 4000), STUDIO_WHISPER_PORT (whisper-server's port, default 8178),
+# STUDIO_WHISPER_MODEL (its model, default ~/.whisper/ggml-small.en.bin), STUDIO_WORKSPACE (the workspace's label, default studio),
 # STUDIO_CLAUDE_CMD (run in place of claude, for trying this out), STUDIO_NO_OPEN=1 (don't open the browser).
 set -euo pipefail
 
@@ -23,6 +25,8 @@ STUDIO_DIR="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
 export STUDIO_DIR
 export STUDIO_HOME="${STUDIO_HOME:-$HOME/.studio}"
 export STUDIO_PORT="${STUDIO_PORT:-4000}"
+export STUDIO_WHISPER_PORT="${STUDIO_WHISPER_PORT:-8178}"
+WHISPER_MODEL="${STUDIO_WHISPER_MODEL:-$HOME/.whisper/ggml-small.en.bin}"
 WORKSPACE="${STUDIO_WORKSPACE:-studio}"
 CONFIG="$STUDIO_HOME/config.json"
 
@@ -54,25 +58,31 @@ CLAUDE="claude --permission-mode auto --settings $(q "$STUDIO_DIR/claude/setting
 has_conversation && CLAUDE="$CLAUDE --continue"
 CLAUDE="${STUDIO_CLAUDE_CMD:-$CLAUDE}"
 
-# Each tab: its label, the folder it starts in and its command. Dictation's whisper-server gets a tab here too, once it is set up.
-TABS="claude studio app"
+# Each tab: its label, the folder it starts in and its command.
+TABS="claude studio app whisper"
 tab_cwd() { [ "$1" = studio ] && echo "$STUDIO_DIR" || echo "$APP_DIR"; }
 tab_command() {
   case "$1" in
     claude) echo "$CLAUDE" ;;
     studio) echo "node $(q "$STUDIO_DIR/scripts/lib/studio-server.js")" ;;
     app) echo "[ -d node_modules ] || npm install; PORT=$APP_PORT npm run dev" ;;
+    whisper)
+      if ! command -v whisper-server >/dev/null; then echo "echo 'Dictation is off: whisper-server is not installed (brew install whisper-cpp).'"
+      elif [ ! -f "$WHISPER_MODEL" ]; then echo "echo $(q "Dictation is off: there is no Whisper model at $WHISPER_MODEL.")"
+      else echo "whisper-server -m $(q "$WHISPER_MODEL") --host 127.0.0.1 --port $STUDIO_WHISPER_PORT --convert"
+      fi ;;
   esac
 }
 tab_port() {
   case "$1" in
     studio) echo "$STUDIO_PORT" ;;
     app) echo "$APP_PORT" ;;
+    whisper) echo "$STUDIO_WHISPER_PORT" ;;
   esac
 }
 
 if [ "$DRY_RUN" = true ]; then
-  echo "Workspace $WORKSPACE, with STUDIO_DIR=$STUDIO_DIR STUDIO_HOME=$STUDIO_HOME STUDIO_PORT=$STUDIO_PORT"
+  echo "Workspace $WORKSPACE, with STUDIO_DIR=$STUDIO_DIR STUDIO_HOME=$STUDIO_HOME STUDIO_PORT=$STUDIO_PORT STUDIO_WHISPER_PORT=$STUDIO_WHISPER_PORT"
   for name in $TABS; do echo "  $name (in $(tab_cwd "$name")): $(tab_command "$name")"; done
   exit 0
 fi
@@ -111,7 +121,7 @@ if ! herdr workspace list >/dev/null 2>&1; then
 fi
 
 # New panes get their environment from herdr's server, not from this shell, so the studio's variables are passed on.
-ENV_ARGS=(--env "STUDIO_DIR=$STUDIO_DIR" --env "STUDIO_HOME=$STUDIO_HOME" --env "STUDIO_PORT=$STUDIO_PORT")
+ENV_ARGS=(--env "STUDIO_DIR=$STUDIO_DIR" --env "STUDIO_HOME=$STUDIO_HOME" --env "STUDIO_PORT=$STUDIO_PORT" --env "STUDIO_WHISPER_PORT=$STUDIO_WHISPER_PORT")
 
 ws=$(herdr workspace list | jq -r --arg label "$WORKSPACE" '.result.workspaces[] | select(.label == $label) | .workspace_id' | head -n1)
 first=""

@@ -11,7 +11,7 @@ Studio runs in the browser at http://localhost:4000. The page has three columns:
 The app lives in its own repo, next to this one (`~/Studio/<app>`). Studio keeps its own state in `~/.studio`:
 
 - `config.json`: the app's folder and name, and the cockpit's settings.
-- Logs, drawings, uploads and the artifact registry.
+- Logs, drawings, uploads and the artifact registry. Dictated clips are kept only with `"keepDictationClips": true` in `config.json`, for looking into text that came out wrong.
 
 ## Start it
 
@@ -19,7 +19,7 @@ The app lives in its own repo, next to this one (`~/Studio/<app>`). Studio keeps
 studio up
 ```
 
-This updates Studio, starts its herdr workspace (Claude, the cockpit's server and the app's dev server, one tab each) and opens the cockpit. Running it again reuses the workspace that's already running. `studio up --dry-run` prints what each tab would run.
+This updates Studio, starts its herdr workspace (Claude, the cockpit's server, the app's dev server and whisper-server for dictation, one tab each) and opens the cockpit. Running it again reuses the workspace that's already running. `studio up --dry-run` prints what each tab would run.
 
 ## Layout
 

@@ -363,3 +363,68 @@ test('keepUpload: a dropped file under its worktree with a safe name, the newest
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/** A free localhost port, for a server a test starts. */
+const freePort = () =>
+  new Promise((resolve) => {
+    const probe = require('node:net').createServer().listen(0, '127.0.0.1', () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
+
+/** Runs the studio server with `home` as STUDIO_HOME and Whisper on `whisperPort`, until `use(post)` is done. */
+const withServer = async (home, whisperPort, use) => {
+  const port = await freePort();
+  const server = require('node:child_process').spawn(process.execPath, [path.join(__dirname, 'studio-server.js')], { env: { ...process.env, STUDIO_HOME: home, STUDIO_PORT: String(port), STUDIO_WHISPER_PORT: String(whisperPort), STUDIO_WHISPER_URL: '' }, stdio: ['ignore', 'ignore', 'pipe'] });
+  try {
+    await new Promise((resolve) => server.stderr.on('data', (chunk) => String(chunk).includes('studio server on') && resolve()));
+    const post = async (endpoint, body, headers = {}) => {
+      const res = await fetch(`http://127.0.0.1:${port}/_env/api/${endpoint}`, { method: 'POST', headers: { 'X-Studio': '1', ...headers }, body });
+      return { status: res.status, json: await res.json() };
+    };
+    await use(post);
+  } finally {
+    server.kill();
+  }
+};
+
+test('transcribe: Whisper on STUDIO_WHISPER_PORT gives the text; no clip is kept unless keepDictationClips is set', async () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'studio-dictation-'));
+  const whisper = require('node:http').createServer((req, res) => {
+    req.resume();
+    req.on('end', () => res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ text: ' Add a button.\n' })));
+  });
+  await new Promise((resolve) => whisper.listen(0, '127.0.0.1', resolve));
+  const recording = { 'Content-Type': 'audio/wav', 'X-Studio-Recording': JSON.stringify({ startedAt: 1763000000000, segment: 0 }) };
+  const dictation = path.join(home, 'logs', 'dictation');
+  try {
+    writeFileSync(path.join(home, 'config.json'), JSON.stringify({ appDir: home }));
+    await withServer(home, whisper.address().port, async (post) => {
+      assert.deepEqual(await post('transcribe', Buffer.alloc(100), recording), { status: 200, json: { text: 'Add a button.' } });
+      assert.equal((await post('dictation-log', JSON.stringify({ startedAt: 1763000000000, text: 'Add a button.' }))).status, 200);
+      assert.ok(!fs.existsSync(dictation));
+      writeFileSync(path.join(home, 'config.json'), JSON.stringify({ appDir: home, keepDictationClips: true }));
+      assert.equal((await post('transcribe', Buffer.alloc(100), recording)).status, 200);
+      assert.equal((await post('dictation-log', JSON.stringify({ startedAt: 1763000000000 }))).status, 200);
+      assert.deepEqual(fs.readdirSync(path.join(dictation, recordingDir(1763000000000).split(path.sep).at(-1))).sort(), ['00.json', '00.wav', 'summary.json']);
+    });
+  } finally {
+    whisper.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("transcribe: when Whisper isn't running, the chat is told so in plain words", async () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'studio-dictation-'));
+  try {
+    writeFileSync(path.join(home, 'config.json'), JSON.stringify({ appDir: home }));
+    await withServer(home, await freePort(), async (post) => {
+      const { status, json } = await post('transcribe', Buffer.alloc(100), { 'Content-Type': 'audio/wav' });
+      assert.equal(status, 502);
+      assert.match(json.error, /Whisper.*isn't running.*studio up/);
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

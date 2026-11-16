@@ -215,7 +215,9 @@ const herdrSnapshot = () => ({
 
 const paneForeground = (pane) => (pane && !pane.agent ? (herdrJson(['pane', 'process-info', '--pane', pane.pane_id])?.process_info?.foreground_processes ?? []).map((proc) => proc.name) : []);
 
-const WHISPER_URL = process.env.STUDIO_WHISPER_URL ?? 'http://127.0.0.1:8178/inference';
+// whisper-server, which `studio up` runs in the workspace's whisper tab (STUDIO_WHISPER_PORT, default 8178).
+const WHISPER_URL = process.env.STUDIO_WHISPER_URL || `http://127.0.0.1:${process.env.STUDIO_WHISPER_PORT || 8178}/inference`;
+const WHISPER_DOWN = "Dictation isn't working because Whisper, which turns speech into text, isn't running. Run studio up again to start it, or type your message instead.";
 const MAX_AUDIO = 25 * 1024 * 1024;
 // Whisper's initial prompt: words it would otherwise mishear, spelled as we write them. It's a sentence, as
 // Whisper copies its prompt's style: a bare list of words had it answer a 26s clip of speech with just "-".
@@ -361,14 +363,15 @@ const transcribe = async (req, res) => {
       if (again.text) answer = { ...again, hinted: answer.raw };
     }
   } catch {
-    sendJson(res, 502, { error: 'whisper-server is not answering: restart the studio (studio up) to start it again' });
+    sendJson(res, 502, { error: WHISPER_DOWN });
     return;
   }
   if (answer.error) {
-    sendJson(res, 502, { error: answer.error });
+    sendJson(res, 502, { error: `Whisper couldn't turn that into text (${answer.error}). Try again, or type your message instead.` });
     return;
   }
-  keepClip(req, audio, answer, Date.now() - startedAt);
+  if (keepsClips()) keepClip(req, audio, answer, Date.now() - startedAt);
+  else if (suspectTranscript(answer.text)) console.error(`transcribe: suspect text ${JSON.stringify(answer.text)} (raw ${JSON.stringify(answer.raw)})`);
   sendJson(res, 200, { text: answer.text });
 };
 
@@ -387,10 +390,12 @@ const cleanTranscript = (raw) =>
 /** Text with nothing to read in it (a lone "-", say), which is sent all the same. */
 const suspectTranscript = (text) => text !== '' && !/[\p{L}\p{N}]/u.test(text);
 
-// Every dictated clip and what's known about it, to look into text that came out wrong or cut short:
-// a folder per recording, its clips, and summary.json once it's stopped. A week's worth is kept (about 2 MB a minute of speech).
+// With keepDictationClips: true in config.json, every dictated clip and what's known about it, to look into text that came
+// out wrong or cut short: a folder per recording, its clips, and summary.json once it's stopped. A week's worth is kept
+// (about 2 MB a minute of speech). Off by default, so nothing she says is written to disk.
 const DICTATION_DIR = path.join(path.dirname(ACTIONS_LOG), 'dictation');
 const DICTATION_KEEP_MS = 7 * 24 * 60 * 60_000;
+const keepsClips = (config = readConfig()) => config.keepDictationClips === true;
 
 /** The facts about a 16 kHz 16-bit mono WAV (as the cockpit sends): how long, and how loud (0-1, peak and RMS). */
 const wavStats = (audio) => {
@@ -1289,7 +1294,7 @@ const handle = async (req, res) => {
       sendJson(res, 400, { error: 'a summary must be an object' });
       return;
     }
-    keepDictationSummary(body);
+    if (keepsClips()) keepDictationSummary(body);
     sendJson(res, 200, {});
     return;
   }
