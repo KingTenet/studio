@@ -1,4 +1,4 @@
-import type { ArtifactNote, ArtifactsView, ControlState, FeatureCheck, SessionView } from './types'
+import type { ArtifactNote, ArtifactsView, ControlState, FeatureCheck, SessionView, WentBack } from './types'
 
 const API = '/_env/api'
 const HEADERS = { 'Content-Type': 'application/json', 'X-Studio': '1' }
@@ -81,6 +81,10 @@ export const checkFeature = () => featureAction<FeatureCheck>('/feature/check', 
 export const keepFeature = (summary: string, anyway: boolean) => featureAction<{ version: string; sha: string; summary: string }>('/feature/keep', { summary, anyway }, 'The feature could not be kept.')
 /** Throws the feature away: the code back to the latest version, the data back to how it was when the feature started. */
 export const discardFeature = () => featureAction<{ name: string; checkpoints: number }>('/feature/discard', {}, 'The feature could not be discarded.')
+/** Goes back to a checkpoint: the code and data as they were then, the later checkpoints dropped (until her next message). */
+export const goBackTo = (sha: string) => featureAction<WentBack>('/feature/go-back', { sha }, 'The app could not go back to that checkpoint.')
+/** Brings back the checkpoints going back dropped, and the code and data as they were. */
+export const bringBack = () => featureAction<{ checkpoints: number }>('/feature/bring-back', {}, 'They could not be brought back.')
 export const setTooltips = (tooltips: boolean) => post('/prefs', { tooltips })
 /** Saves one UI setting every page shares (useSharedPref). */
 export const setUiPref = (key: string, value: unknown) => post('/prefs', { ui: { [key]: value } })

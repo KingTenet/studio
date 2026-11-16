@@ -1,12 +1,12 @@
-import { Check, LoaderCircle, Play, Trash2, Wrench } from 'lucide-react'
+import { Check, LoaderCircle, Play, RotateCcw, Trash2, Undo2, Wrench } from 'lucide-react'
 import { useState } from 'react'
 import { useControls } from '@/components/controls/ControlsProvider'
 import { useTip } from '@/components/controls/Tip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { checkFeature, discardFeature, keepFeature, sendToSession, startFeature } from '@/lib/api'
+import { bringBack, checkFeature, discardFeature, goBackTo, keepFeature, sendToSession, startFeature } from '@/lib/api'
 import { plural } from '@/lib/format'
-import type { App, Feature, FeatureCheck } from '@/lib/types'
+import type { App, Checkpoint, Feature, FeatureCheck } from '@/lib/types'
 
 type StartFeatureProps = {
   /** Shown above the box. */
@@ -181,6 +181,76 @@ const KeepOrDiscard = ({ w, feature }: { w: App; feature: Feature }) => {
   )
 }
 
+/**
+ * The checkpoints, oldest first, each with what she asked for and (but the newest) [Go back to here], which asks first, naming
+ * the later checkpoints it discards. After going back, [Bring them back] restores them until her next message.
+ */
+const Checkpoints = ({ w, feature }: { w: App; feature: Feature }) => {
+  const tip = useTip()
+  const { confirm, refresh } = useControls()
+  const chat = w.agents.find((agent) => agent.tab !== 'Artifacts')
+  const claudeBusy = chat?.status === 'working' || chat?.status === 'blocked'
+  const [doing, setDoing] = useState(false)
+  const [message, setMessage] = useState('')
+  const disabled = claudeBusy || doing
+  const why = claudeBusy ? (chat?.status === 'working' ? 'Claude is working…' : 'Claude is waiting on a question') : ''
+
+  const act = async (action: () => Promise<object | { error: string }>) => {
+    setDoing(true)
+    const done = await action()
+    setDoing(false)
+    setMessage('error' in done ? done.error : '')
+    await refresh()
+  }
+  const goBack = async (checkpoint: Checkpoint, later: Checkpoint[]) => {
+    const ok = await confirm(
+      `Go back to "${checkpoint.label}"?\nThe app's code and data go back to how they were at this checkpoint, and ${later.length === 1 ? 'this later checkpoint is' : `these ${later.length} later checkpoints are`} discarded:\n\n${later.map((c) => `• ${c.label}`).join('\n')}\n\nYou can bring them back until you send your next message.`
+    )
+    if (ok) await act(() => goBackTo(checkpoint.sha))
+  }
+
+  return (
+    <>
+      <ol className="grid gap-2 border-l pl-3">
+        {feature.checkpoints.map((checkpoint, i) => (
+          <li key={checkpoint.sha} className="relative grid gap-0.5">
+            <span aria-hidden className="absolute top-1.5 -left-[17px] size-2 rounded-full bg-sky-600" />
+            <span className="text-sm [overflow-wrap:anywhere]">{checkpoint.label}</span>
+            {checkpoint.prompt && (
+              <span className="line-clamp-2 text-xs text-muted-foreground [overflow-wrap:anywhere]" title={checkpoint.prompt}>
+                you asked: {checkpoint.prompt}
+              </span>
+            )}
+            {i < feature.checkpoints.length - 1 && (
+              <Button
+                size="xs"
+                variant="link"
+                className="justify-self-start px-0 text-muted-foreground"
+                disabled={disabled}
+                title={tip(why || 'Put the code and data back to how they were at this checkpoint, discarding the later ones')}
+                onClick={() => void goBack(checkpoint, feature.checkpoints.slice(i + 1))}
+              >
+                <RotateCcw /> Go back to here
+              </Button>
+            )}
+          </li>
+        ))}
+      </ol>
+      {w.wentBack && (
+        <div className="grid gap-1 rounded-lg border bg-muted/40 p-2 text-sm">
+          <p>
+            Went back to "{w.wentBack.to.label}". {plural(w.wentBack.discarded.length, 'later checkpoint')} discarded.
+          </p>
+          <Button size="xs" variant="outline" className="justify-self-start" disabled={disabled} title={tip(why || 'Undo going back: until you send your next message')} onClick={() => void act(bringBack)}>
+            <Undo2 /> Bring them back
+          </Button>
+        </div>
+      )}
+      {message && <p className="text-xs text-muted-foreground">{message}</p>}
+    </>
+  )
+}
+
 /** The Feature section's body: the feature being built and its checkpoints (each with what she asked for), Keep and Discard; or a way to start one. */
 export const FeaturePanel = ({ w }: { w: App | null }) => {
   const feature = w?.feature
@@ -196,19 +266,7 @@ export const FeaturePanel = ({ w }: { w: App | null }) => {
       {feature.checkpoints.length === 0 ? (
         <p className="text-sm text-muted-foreground">Ask Claude for the first change. Each change it makes is saved here as a checkpoint.</p>
       ) : (
-        <ol className="grid gap-2 border-l pl-3">
-          {feature.checkpoints.map((checkpoint) => (
-            <li key={checkpoint.sha} className="relative grid gap-0.5">
-              <span aria-hidden className="absolute top-1.5 -left-[17px] size-2 rounded-full bg-sky-600" />
-              <span className="text-sm [overflow-wrap:anywhere]">{checkpoint.label}</span>
-              {checkpoint.prompt && (
-                <span className="line-clamp-2 text-xs text-muted-foreground [overflow-wrap:anywhere]" title={checkpoint.prompt}>
-                  you asked: {checkpoint.prompt}
-                </span>
-              )}
-            </li>
-          ))}
-        </ol>
+        <Checkpoints w={w} feature={feature} />
       )}
       <KeepOrDiscard w={w} feature={feature} />
     </div>

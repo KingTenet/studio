@@ -31,6 +31,9 @@ export type Checkpoint = {
 /** The feature being built: develop, from main at `base`, with a checkpoint per Build turn that changed files. */
 export type Feature = { name: string; startedAt: string; base: string; checkpoints: Checkpoint[] }
 
+/** After going back to a checkpoint, until her next message: the one she went back to and the later checkpoints' labels, which Bring them back restores. */
+export type WentBack = { to: { sha: string; label: string }; discarded: string[] }
+
 /** A version kept: main at its annotated tag `tag` (v1, v2…), named after the feature it added. */
 export type Version = { tag: string; name: string; sha: string; at: string }
 
@@ -58,6 +61,8 @@ export type App = {
   feature: Feature | null
   /** Branches whose last push failed, tried again with the next commit. */
   unpushed: string[]
+  /** What going back to a checkpoint dropped, while it can still be brought back; else null. */
+  wentBack: WentBack | null
   /** The versions kept so far, oldest first. */
   versions: Version[]
 }

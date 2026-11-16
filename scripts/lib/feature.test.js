@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { discard, keep, lastReply, nameFromPrompt, read, runGate, stateDir, summarise, turnLabel, versions } = require('./feature');
+const { bringBack, discard, goBack, keep, lastReply, nameFromPrompt, read, runGate, stateDir, summarise, turnLabel, versions } = require('./feature');
 
 const SCRIPT = path.join(__dirname, 'feature.js');
 const IDENTITY = { GIT_AUTHOR_NAME: 'Her', GIT_AUTHOR_EMAIL: 'her@example.com', GIT_COMMITTER_NAME: 'Her', GIT_COMMITTER_EMAIL: 'her@example.com' };
@@ -451,6 +451,90 @@ test('Discard: develop back to main, new files gone, data/ as it was at the star
     assert.equal(remoteSha(t.origin, 'develop'), v1);
     assert.equal(remoteSha(t.origin, 'main'), v1);
     assert.equal(tagObject(t.origin, 'v1'), v1Tag);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+/** Every file in the app but .git and node_modules, with its contents, so two states can be compared exactly. */
+const allFiles = (dir, base = dir) =>
+  Object.fromEntries(
+    fs
+      .readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => !['.git', 'node_modules'].includes(entry.name))
+      .flatMap((entry) => {
+        const file = path.join(dir, entry.name);
+        return entry.isDirectory() ? Object.entries(allFiles(file, base)) : [[path.relative(base, file), fs.readFileSync(file, 'utf8')]];
+      })
+  );
+
+test('Go back to here: develop and data/ back to the checkpoint; Bring them back restores everything exactly until her next message, which tells Claude once', async () => {
+  const t = keepSetup();
+  try {
+    const write = (file, text) => fs.writeFileSync(path.join(t.app, file), text);
+    t.run(['start', 'dark mode']);
+    t.turn('Make it dark', () => (write('page.html', 'dark\n'), write('data/app.db', 'rows: 1')), 'Checkpoint: Made the page dark');
+    t.turn('Add a toggle', () => (write('toggle.js', 'toggle\n'), write('data/app.db', 'rows: 2')), 'Checkpoint: Added a toggle');
+    t.turn('Remember it', () => (write('page.html', 'dark, remembered\n'), write('data/prefs.db', 'dark')), 'Checkpoint: Remembered the choice');
+    const [first, second, third] = read(t.app).feature.checkpoints;
+    // Since the last checkpoint: a change not committed, a new file, a deleted one, and the app used (data changed, logs too).
+    write('page.html', 'not yet a checkpoint\n');
+    write('stray.js', 'new\n');
+    fs.rmSync(path.join(t.app, 'toggle.js'));
+    write('data/app.db', 'rows: 7');
+    assert.equal((await runGate(t.app)).ok, true);
+    const head = git(t.app, 'rev-parse', 'HEAD');
+    const status = git(t.app, 'status', '--porcelain');
+    const before = allFiles(t.app);
+
+    assert.deepEqual(goBack(t.app, second.sha), { to: { sha: second.sha, label: 'Added a toggle' }, discarded: ['Remembered the choice'] });
+    assert.equal(git(t.app, 'rev-parse', 'develop'), second.sha);
+    assert.equal(git(t.app, 'status', '--porcelain'), '');
+    assert.equal(fs.readFileSync(path.join(t.app, 'page.html'), 'utf8'), 'dark\n');
+    assert.ok(fs.existsSync(path.join(t.app, 'toggle.js')) && !fs.existsSync(path.join(t.app, 'stray.js')));
+    assert.deepEqual(fs.readdirSync(path.join(t.app, 'data')).sort(), ['app.db', 'logs']);
+    assert.equal(fs.readFileSync(path.join(t.app, 'data', 'app.db'), 'utf8'), 'rows: 2');
+    assert.deepEqual(read(t.app).feature.checkpoints.map((checkpoint) => checkpoint.sha), [first.sha, second.sha]);
+    // The test run was for the files as they were, so Keep needs them run again.
+    assert.throws(() => keep(t.app, {}), /changed since the tests last ran/);
+
+    // Going back further before her next message: Bring them back still brings back everything there was before the first.
+    assert.deepEqual(goBack(t.app, first.sha).discarded, ['Added a toggle', 'Remembered the choice']);
+    assert.equal(fs.readFileSync(path.join(t.app, 'data', 'app.db'), 'utf8'), 'rows: 1');
+    assert.throws(() => goBack(t.app, third.sha), /isn't one of this feature's/);
+
+    assert.deepEqual(bringBack(t.app), { checkpoints: 3 });
+    assert.equal(git(t.app, 'rev-parse', 'develop'), head);
+    assert.equal(git(t.app, 'status', '--porcelain'), status);
+    assert.deepEqual(allFiles(t.app), before, 'code, uncommitted changes and data exactly as before');
+    assert.deepEqual(read(t.app).feature.checkpoints, [first, second, third]);
+    assert.equal(read(t.app).wentBack, null);
+    assert.throws(() => bringBack(t.app), /nothing to bring back/);
+
+    // Back to the second again; develop is force-pushed.
+    goBack(t.app, second.sha);
+    const pushed = t.run(['push']);
+    assert.deepEqual(JSON.parse(pushed.stdout), { pushed: ['develop'], failed: [] }, pushed.stderr);
+    assert.equal(remoteSha(t.origin, 'develop'), second.sha);
+
+    // Her next message lets the later checkpoint go and tells Claude, once.
+    const sent = t.hook('prompt-submit', { prompt: 'Make the toggle blue' });
+    assert.equal(sent.status, 0, sent.stderr);
+    assert.equal(
+      sent.stdout,
+      `[studio] She went back to the checkpoint "Added a toggle": the app's code and data are as they were then. The change after it was discarded: "Remembered the choice". Don't assume anything from them is still there.`
+    );
+    assert.equal(read(t.app).wentBack, null);
+    assert.throws(() => bringBack(t.app), /nothing to bring back/);
+    assert.deepEqual(fs.readdirSync(path.join(stateDir(t.app), 'snapshots')).sort(), [read(t.app).feature.base, first.sha, second.sha].sort());
+    assert.equal(t.hook('prompt-submit', { prompt: 'And bigger' }).stdout, '');
+
+    // Work goes on from there; and a feature closed while she has gone back leaves nothing to bring back.
+    t.turn('Make it bigger', () => write('toggle.js', 'big toggle\n'), 'Checkpoint: Made the toggle bigger');
+    assert.deepEqual(read(t.app).feature.checkpoints.map((checkpoint) => checkpoint.label), ['Made the page dark', 'Added a toggle', 'Made the toggle bigger']);
+    goBack(t.app, first.sha);
+    discard(t.app);
+    assert.equal(read(t.app).wentBack, null);
   } finally {
     await t.cleanup();
   }

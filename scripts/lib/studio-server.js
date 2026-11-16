@@ -5,7 +5,7 @@
  * for one app (config.appDir) and the Claude session working on it in a herdr pane.
  *
  * The API: /_env/api/state (the app, its Claude pane, the feature being built, its versions and the shared prefs),
- * the feature (feature/start, feature/check, feature/keep, feature/discard),
+ * the feature (feature/start, feature/check, feature/keep, feature/discard, feature/go-back, feature/bring-back),
  * the chat (session, session/send),
  * artifacts (list, serve, remove, unnote, artifact-shot), Draw and dropped files (drawing, upload),
  * dictation (listener, transcribe, dictation-log, vad/) and jobs (run: start or resume Claude, rebuild the artifact index).
@@ -29,7 +29,7 @@ const path = require('node:path');
 const { COMMAND_SHELL_MARKER, pausedSessions, processTree, readClosed, runningCommands, withRealSessions } = require('./claude-reaper');
 const { describe: describeArtifacts, folderFor: artifactFolder, locate: locateArtifact, remove: removeArtifacts, removeNote: removeArtifactNote } = require('./artifacts');
 const { paneInput, panePrompt, readTranscript, sessionTitle, transcriptPath } = require('./session-view');
-const { discard: discardFeature, keep: keepFeature, nextVersion, pushInBackground, read: readFeature, runGate, start: startFeature, summarise, versions } = require('./feature');
+const { bringBack, discard: discardFeature, goBack, keep: keepFeature, nextVersion, pushInBackground, read: readFeature, runGate, start: startFeature, summarise, versions } = require('./feature');
 
 const SCRIPTS = path.resolve(__dirname, '..');
 const WEB_DIST = path.resolve(SCRIPTS, '..', 'web', 'dist');
@@ -1237,6 +1237,37 @@ const discardFeatureNow = async (req, res) => {
   sendJson(res, 200, discarded);
 };
 
+/** Goes back to a checkpoint ({ sha }): develop and data/ as they were then, the later checkpoints dropped; develop is pushed. */
+const goBackNow = async (req, res) => {
+  const { sha } = JSON.parse(await readBody(req));
+  const appDir = appInfo().dir;
+  if (refuseWhileBusy(res, chatAgent(appDir), 'Go back')) return;
+  let wentBack;
+  try {
+    wentBack = goBack(appDir, String(sha ?? ''));
+  } catch (error) {
+    sendJson(res, 409, { error: error.message });
+    return;
+  }
+  pushInBackground(appDir);
+  sendJson(res, 200, wentBack);
+};
+
+/** Brings back what going back dropped, until her next message is sent; develop is pushed. */
+const bringBackNow = async (req, res) => {
+  const appDir = appInfo().dir;
+  if (refuseWhileBusy(res, chatAgent(appDir), 'Bring them back')) return;
+  let brought;
+  try {
+    brought = bringBack(appDir);
+  } catch (error) {
+    sendJson(res, 409, { error: error.message });
+    return;
+  }
+  pushInBackground(appDir);
+  sendJson(res, 200, brought);
+};
+
 // --- the cockpit page and the API --------------------------------------------------------
 
 const cockpitPage = () => {
@@ -1485,7 +1516,7 @@ const handle = async (req, res) => {
     await startFeatureNow(req, res);
     return;
   }
-  const featureAction = { '/_env/api/feature/check': checkFeatureNow, '/_env/api/feature/keep': keepFeatureNow, '/_env/api/feature/discard': discardFeatureNow }[url.pathname];
+  const featureAction = { '/_env/api/feature/check': checkFeatureNow, '/_env/api/feature/keep': keepFeatureNow, '/_env/api/feature/discard': discardFeatureNow, '/_env/api/feature/go-back': goBackNow, '/_env/api/feature/bring-back': bringBackNow }[url.pathname];
   if (req.method === 'POST' && featureAction) {
     if (needsJobHeader(req, res)) return;
     await featureAction(req, res);

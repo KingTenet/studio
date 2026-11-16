@@ -19,12 +19,19 @@
  *   gate.json         the last run of the tests Keep is gated on: { tree, ok, at, results: [{ name, ok, output }] }, for the
  *                     files as they were (tree), so Keep knows whether they still hold
  *   summary-digest.md what the feature summary (feature-summary.sh) is written from
+ *   went-back.json    after going back to a checkpoint, until her next message: { to: { sha, label }, head, tree,
+ *                     checkpoints, at }, what develop, the files (tree, uncommitted ones too) and the checkpoints were
+ *                     before, so Bring them back can restore them; data/ as it was is in snapshots/went-back/
  *
  * Keeping a feature squashes its checkpoints into one commit on main named after it (main only ever fast-forwards),
  * with its summary added to the app's FEATURES.md, tags it v(N+1) and leaves develop equal to main. Discarding it
  * resets develop to main and puts data/ back as it was when the feature started. Either way the feature closes.
  *
- * Usage: node lib/feature.js prompt-submit         UserPromptSubmit hook: notes the prompt; starts a feature if none is open
+ * Going back to a checkpoint resets develop and data/ to it and drops the later checkpoints; Bring them back undoes that
+ * exactly, until her next message, which lets them go for good and tells Claude she went back.
+ *
+ * Usage: node lib/feature.js prompt-submit         UserPromptSubmit hook: notes the prompt; starts a feature if none is open;
+ *                                                  lets go of what going back left, telling Claude
  *        node lib/feature.js stop                  Stop hook: commits a checkpoint if the turn changed files
  *        node lib/feature.js start <name> [app]    start a feature (the cockpit's server does this, and runs /clear)
  *        node lib/feature.js push [app] [branch…]  push develop, those branches and every branch whose push failed
@@ -64,7 +71,7 @@ const configuredApp = () => path.resolve(readJson(path.join(studioHome(), 'confi
 const stateDir = (appDir) => path.join(studioHome(), 'features', path.resolve(appDir).replace(/[^A-Za-z0-9]/g, '-'));
 const files = (appDir) => {
   const dir = stateDir(appDir);
-  return { dir, feature: path.join(dir, 'feature.json'), turn: path.join(dir, 'turn.json'), push: path.join(dir, 'push.json'), snapshots: path.join(dir, 'snapshots'), gate: path.join(dir, 'gate.json'), digest: path.join(dir, 'summary-digest.md') };
+  return { dir, feature: path.join(dir, 'feature.json'), turn: path.join(dir, 'turn.json'), push: path.join(dir, 'push.json'), snapshots: path.join(dir, 'snapshots'), gate: path.join(dir, 'gate.json'), digest: path.join(dir, 'summary-digest.md'), wentBack: path.join(dir, 'went-back.json') };
 };
 
 const git = (appDir, ...args) => execFileSync('git', ['-C', appDir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }).trim();
@@ -101,8 +108,22 @@ const withLock = (appDir, fn, name = 'lock', wait = LOCK_WAIT_MS) => {
   }
 };
 
-/** The open feature ({ name, startedAt, base, checkpoints }) or null, and the branches whose push failed. */
-const read = (appDir) => ({ feature: readJson(files(appDir).feature, null), unpushed: Object.keys(readJson(files(appDir).push, {}).pending ?? {}) });
+/** What going back to a checkpoint left to bring back, for the cockpit: { to: { sha, label }, discarded: [label] }, or null. */
+const wentBackView = (wentBack) => {
+  if (!wentBack) return null;
+  const at = wentBack.checkpoints.findIndex((checkpoint) => checkpoint.sha === wentBack.to.sha);
+  return { to: wentBack.to, discarded: wentBack.checkpoints.slice(at + 1).map((checkpoint) => checkpoint.label) };
+};
+
+/**
+ * The open feature ({ name, startedAt, base, checkpoints }) or null, the branches whose push failed, and what going back to a
+ * checkpoint left to bring back (wentBackView), or null.
+ */
+const read = (appDir) => ({
+  feature: readJson(files(appDir).feature, null),
+  unpushed: Object.keys(readJson(files(appDir).push, {}).pending ?? {}),
+  wentBack: wentBackView(readJson(files(appDir).wentBack, null)),
+});
 
 /** Copies the app's data/ (without logs/) to the snapshot for a commit; an app with no data/ gets an empty one. */
 const snapshotData = (appDir, sha) => {
@@ -378,10 +399,10 @@ const summarise = async (appDir, { command = process.env.STUDIO_SUMMARY_CMD || p
   return text ? { text, fallback: false } : { text: fallbackSummary(feature), fallback: true };
 };
 
-/** Closes the feature: its state, snapshots, test run and digest go. */
+/** Closes the feature: its state, snapshots, test run, digest and what going back left to bring back go. */
 const close = (appDir) => {
-  const { feature, snapshots, gate, digest } = files(appDir);
-  for (const file of [feature, snapshots, gate, digest]) fs.rmSync(file, { recursive: true, force: true });
+  const { feature, snapshots, gate, digest, wentBack } = files(appDir);
+  for (const file of [feature, snapshots, gate, digest, wentBack]) fs.rmSync(file, { recursive: true, force: true });
 };
 
 /**
@@ -448,6 +469,81 @@ const discard = (appDir) =>
     restoreData(appDir, feature.base);
     close(appDir);
     return { name: feature.name, checkpoints: feature.checkpoints.length };
+  });
+
+// --- going back to a checkpoint ---------------------------------------------------------------
+
+/** The snapshot data/ was in when she went back, for Bring them back (never a commit's sha). */
+const WENT_BACK_DATA = 'went-back';
+
+/**
+ * Goes back to one of the open feature's checkpoints: develop is reset to it (changes not committed, and new files git doesn't
+ * ignore, go too), data/ is put back as it was then and the later checkpoints are dropped. What there was before is kept, so
+ * bringBack can restore it exactly, until forgetWentBack (her next message). Going back again before then still brings back
+ * what there was before the first. Returns { to, discarded } (wentBackView); push develop after.
+ */
+const goBack = (appDir, sha, now = new Date()) =>
+  withLock(appDir, () => {
+    const feature = read(appDir).feature;
+    if (!feature) throw new Error('no feature is being built');
+    const at = feature.checkpoints.findIndex((checkpoint) => checkpoint.sha === sha);
+    if (at < 0) throw new Error("that checkpoint isn't one of this feature's");
+    if (git(appDir, 'symbolic-ref', '--short', '-q', 'HEAD') !== 'develop') throw new Error('the app is not on develop, so it cannot go back');
+    if (!fs.existsSync(path.join(files(appDir).snapshots, sha))) throw new Error(`there is no snapshot of the app's data for ${sha.slice(0, 7)}`);
+    const before =
+      readJson(files(appDir).wentBack, null) ??
+      (() => {
+        snapshotData(appDir, WENT_BACK_DATA);
+        return { head: git(appDir, 'rev-parse', 'HEAD'), tree: workTree(appDir), checkpoints: feature.checkpoints };
+      })();
+    git(appDir, 'reset', '-q', '--hard', sha);
+    git(appDir, 'clean', '-q', '-f', '-d');
+    restoreData(appDir, sha);
+    const { label } = feature.checkpoints[at];
+    const wentBack = { to: { sha, label }, head: before.head, tree: before.tree, checkpoints: before.checkpoints, at: now.toISOString() };
+    writeJson(files(appDir).wentBack, wentBack);
+    writeJson(files(appDir).feature, { ...feature, checkpoints: feature.checkpoints.slice(0, at + 1) });
+    return wentBackView(wentBack);
+  });
+
+/**
+ * Undoes going back: develop, the files (uncommitted ones too), data/ and the checkpoints are as they were before. Refused once
+ * her next message has let them go. Returns { checkpoints } (how many there are again); push develop after.
+ */
+const bringBack = (appDir) =>
+  withLock(appDir, () => {
+    const feature = read(appDir).feature;
+    const wentBack = readJson(files(appDir).wentBack, null);
+    if (!feature || !wentBack) throw new Error('There is nothing to bring back: the later checkpoints went when the next message was sent.');
+    if (git(appDir, 'symbolic-ref', '--short', '-q', 'HEAD') !== 'develop') throw new Error('the app is not on develop, so they cannot be brought back');
+    git(appDir, 'reset', '-q', '--hard', wentBack.head);
+    git(appDir, 'clean', '-q', '-f', '-d');
+    // The files as they were, uncommitted changes and new files too; then the index back to the commit, so they show as uncommitted again.
+    git(appDir, 'read-tree', '--reset', '-u', wentBack.tree);
+    git(appDir, 'reset', '-q');
+    restoreData(appDir, WENT_BACK_DATA);
+    writeJson(files(appDir).feature, { ...feature, checkpoints: wentBack.checkpoints });
+    fs.rmSync(path.join(files(appDir).snapshots, WENT_BACK_DATA), { recursive: true, force: true });
+    fs.rmSync(files(appDir).wentBack, { force: true });
+    return { checkpoints: wentBack.checkpoints.length };
+  });
+
+/**
+ * Lets go of what going back left to bring back (the later checkpoints' snapshots and data/ as it was), when her next message is
+ * sent. Returns the note for that message's prompt, so Claude knows the later changes are gone, or '' when she hadn't gone back.
+ */
+const forgetWentBack = (appDir) =>
+  withLock(appDir, () => {
+    const wentBack = readJson(files(appDir).wentBack, null);
+    if (!wentBack) return '';
+    const { to, discarded } = wentBackView(wentBack);
+    const kept = new Set((read(appDir).feature?.checkpoints ?? []).map((checkpoint) => checkpoint.sha));
+    for (const name of [WENT_BACK_DATA, ...wentBack.checkpoints.map((checkpoint) => checkpoint.sha).filter((sha) => !kept.has(sha))]) {
+      fs.rmSync(path.join(files(appDir).snapshots, name), { recursive: true, force: true });
+    }
+    fs.rmSync(files(appDir).wentBack, { force: true });
+    const later = discarded.length ? `The ${discarded.length === 1 ? 'change' : `${discarded.length} changes`} after it ${discarded.length === 1 ? 'was' : 'were'} discarded: ${discarded.map((label) => `"${label}"`).join(', ')}.` : 'Changes made after it were discarded.';
+    return `[studio] She went back to the checkpoint "${to.label}": the app's code and data are as they were then. ${later} Don't assume anything from them is still there.`;
   });
 
 const CHECKPOINT_LINE = /^[\s>*_`-]*checkpoint[*_`]*\s*:\s*(.+?)\s*$/gim;
@@ -527,8 +623,10 @@ const appFor = (event, appDir = configuredApp()) => {
  */
 const onPromptSubmit = (event, appDir = appFor(event)) => {
   if (!appDir || event.agent_id) return '';
+  // Her message lets go of what going back left to bring back, and Claude is told she went back, this once.
+  const wentBack = forgetWentBack(appDir);
   notePrompt(appDir, event.prompt);
-  if (turnMode(appDir) !== 'build' || read(appDir).feature) return '';
+  if (turnMode(appDir) !== 'build' || read(appDir).feature) return wentBack;
   const feature = start(appDir, nameFromPrompt(event.prompt));
   pushInBackground(appDir);
   return `[studio] No feature was open, so a new one was started for this work, called "${feature.name}".`;
@@ -583,4 +681,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { checkpoint, discard, fallbackSummary, keep, lastReply, nameFromPrompt, nextVersion, notePrompt, onPromptSubmit, onStop, push, pushInBackground, read, restoreData, runGate, snapshotData, start, stateDir, summarise, turnLabel, turnMode, versions, withLock, writeDigest };
+module.exports = { bringBack, checkpoint, discard, fallbackSummary, forgetWentBack, goBack, keep, lastReply, nameFromPrompt, nextVersion, notePrompt, onPromptSubmit, onStop, push, pushInBackground, read, restoreData, runGate, snapshotData, start, stateDir, summarise, turnLabel, turnMode, versions, withLock, writeDigest };
