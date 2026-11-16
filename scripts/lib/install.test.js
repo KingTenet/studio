@@ -46,7 +46,7 @@ esac`),
   // The real build is checked elsewhere; this one only records that it was asked for.
   pnpm: script(''),
 };
-const FORMULA_COMMANDS = { 'whisper-cpp': 'whisper-server', 'claude-code': 'claude' };
+const FORMULA_COMMANDS = { 'whisper-cpp': 'whisper-server' };
 
 const BREW = script(`[ "$1" = install ] || exit 1
 for arg in "$@"; do case "$arg" in install|--*) ;; *) formula=$arg ;; esac; done
@@ -62,6 +62,9 @@ const setup = () => {
   Object.values(dirs).forEach((d) => fs.mkdirSync(d));
   fs.writeFileSync(path.join(dirs.stubs, 'brew'), BREW, { mode: 0o755 });
   for (const [name, body] of Object.entries(CELLAR)) fs.writeFileSync(path.join(dirs.cellar, name), body, { mode: 0o755 });
+  // Anthropic's installer, served from a file: it puts the claude stand-in in ~/.local/bin.
+  const claudeInstaller = path.join(root, 'claude-install.sh');
+  fs.writeFileSync(claudeInstaller, `echo "claude-installer" >>"$LOG"; mkdir -p "$HOME/.local/bin"; cp "$CELLAR/claude" "$HOME/.local/bin/claude"\n`);
   const model = path.join(root, 'ggml-small.en.bin');
   fs.writeFileSync(model, 'a whisper model');
   const env = {
@@ -74,6 +77,7 @@ const setup = () => {
     CELLAR: dirs.cellar,
     BIN: dirs.bin,
     STUDIO_WHISPER_MODEL_URL: `file://${model}`,
+    STUDIO_CLAUDE_INSTALL_URL: `file://${claudeInstaller}`,
     TMPDIR: os.tmpdir(),
   };
   const install = (args = [], input = '') => spawnSync('bash', [INSTALL, ...args], { env, input, encoding: 'utf8' });
@@ -90,7 +94,9 @@ test('install.sh sets everything up once, and a second run changes nothing', () 
 
   // Tools, the model and the logins.
   for (const f of ['herdr', 'node', 'pnpm', 'gh', 'whisper-cpp']) assert.match(log(), new RegExp(`^brew install --quiet ${f}$`, 'm'));
-  assert.match(log(), /^brew install --quiet --cask claude-code$/m);
+  assert.match(log(), /^claude-installer$/m);
+  assert.doesNotMatch(log(), /claude-code/);
+  assert.ok(fs.existsSync(path.join(dirs.home, '.local', 'bin', 'claude')));
   assert.equal(fs.readFileSync(path.join(dirs.home, '.whisper', 'ggml-small.en.bin'), 'utf8'), 'a whisper model');
   assert.match(log(), /^gh auth login /m);
   assert.match(log(), /^gh auth setup-git$/m);
@@ -132,6 +138,7 @@ test('install.sh sets everything up once, and a second run changes nothing', () 
   const second = install(['--collaborator', 'helper-gh']); // no input: it must not ask anything
   assert.equal(second.status, 0, second.stdout + second.stderr);
   assert.doesNotMatch(log(), /^brew /m);
+  assert.doesNotMatch(log(), /^claude-installer$/m);
   assert.doesNotMatch(log(), /auth login|repo create/);
   assert.doesNotMatch(log(), /^herdr integration install/m);
   assert.equal(JSON.parse(fs.readFileSync(path.join(dirs.home, '.studio', 'config.json'), 'utf8')).name, 'Her App');
@@ -172,4 +179,31 @@ test('an app name that would make a bad folder or repo name is refused', () => {
   const run = install(['--app', 'My App']);
   assert.equal(run.status, 2);
   assert.match(run.stderr, /lowercase letters, numbers and dashes/);
+});
+
+test("on a Mac whose Homebrew belongs to another account, it says so instead of failing inside brew", () => {
+  const { install, env, root } = setup();
+  const prefix = path.join(root, 'homebrew');
+  fs.mkdirSync(path.join(prefix, 'bin'), { recursive: true });
+  fs.chmodSync(path.join(prefix, 'bin'), 0o555);
+  const brew = fs.readFileSync(path.join(env.BIN, '..', 'stubs', 'brew'), 'utf8');
+  fs.writeFileSync(path.join(env.BIN, '..', 'stubs', 'brew'), brew.replace('[ "$1" = install ] || exit 1', `[ "$1" = --prefix ] && { echo "${prefix}"; exit 0; }\n[ "$1" = install ] || exit 1`), { mode: 0o755 });
+  const run = install([], 'Her\nher@example.com\n');
+  fs.chmodSync(path.join(prefix, 'bin'), 0o755);
+  assert.equal(run.status, 1);
+  assert.match(run.stderr, /Homebrew on this Mac belongs to another account \(.+\), so this one can't add herdr\. Ask that account to run: brew install herdr/);
+  assert.match(run.stderr, /Setup stopped while: The tools the studio uses\./);
+});
+
+test("a Claude Code download that drops over HTTP/2 is tried again over HTTP/1.1, the installer's own downloads included", () => {
+  const { install, env, log } = setup();
+  // curl that fails like the dropped download (exit 92) unless its .curlrc (CURL_HOME) asks for HTTP/1.1.
+  fs.writeFileSync(path.join(env.BIN, '..', 'stubs', 'curl'), `#!/bin/bash
+case "$*" in *claude-install.sh*) grep -qs '^http1.1$' "$CURL_HOME/.curlrc" || { echo "curl: (92) HTTP/2 stream 1 was not closed cleanly" >&2; exit 92; } ;; esac
+exec /usr/bin/curl "$@"
+`, { mode: 0o755 });
+  const run = install([], 'Her\nher@example.com\n');
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.match(run.stdout, /trying again over HTTP\/1\.1/);
+  assert.equal(log().match(/^claude-installer$/gm)?.length, 1);
 });

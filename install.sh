@@ -36,6 +36,7 @@ APP_DIR="$HOME/Studio/$APP_NAME"
 BUNDLE="$STUDIO_DIR/template/app.bundle"
 WHISPER_MODEL="${STUDIO_WHISPER_MODEL:-$HOME/.whisper/ggml-small.en.bin}"
 WHISPER_MODEL_URL="${STUDIO_WHISPER_MODEL_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin}"
+CLAUDE_INSTALL_URL="${STUDIO_CLAUDE_INSTALL_URL:-https://claude.ai/install.sh}"
 BIN_DIR="$HOME/.local/bin"
 ZPROFILE="$HOME/.zprofile"
 
@@ -48,6 +49,28 @@ die() { echo "    $1" >&2; fail; }
 
 # A line added to ~/.zprofile (read by every new Terminal window), unless it's already there.
 add_to_zprofile() { grep -qsF "$1" "$ZPROFILE" || { printf '\n%s\n' "$1" >>"$ZPROFILE"; echo "    added to $ZPROFILE: $1"; }; }
+
+# Homebrew can only add things for the account that owns it (on a shared Mac, maybe someone else's). A Homebrew that can't
+# tell (no --prefix) counts as writable.
+brew_writable() {
+  local prefix
+  prefix=$(brew --prefix 2>/dev/null) || return 0
+  [ -w "$prefix/bin" ] && { [ ! -e "$prefix/var/homebrew/locks" ] || [ -w "$prefix/var/homebrew/locks" ]; }
+}
+brew_install() {
+  brew_writable || die "Homebrew on this Mac belongs to another account ($(stat -f %Su "$(brew --prefix)")), so this one can't add $*. Ask that account to run: brew install $*"
+  brew install --quiet "$@"
+}
+
+# Anthropic's own installer for Claude Code: it goes in ~/.local/bin, needs no admin rights and keeps itself up to date.
+# CURL_HOME points curl (the installer's own downloads too) at a .curlrc; the retry uses one that asks for HTTP/1.1,
+# because some security software drops HTTP/2 downloads part way.
+install_claude() {
+  local rc
+  rc=$(mktemp -d)
+  [ "${1:-}" = http1.1 ] && echo "http1.1" >"$rc/.curlrc"
+  CURL_HOME="$rc" curl -fsSL "$CLAUDE_INSTALL_URL" | CURL_HOME="$rc" bash
+}
 
 node_ok() { command -v node >/dev/null && node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 23 || (a === 23 && b >= 8) || (a === 22 && b >= 16) ? 0 : 1)'; }
 
@@ -79,18 +102,27 @@ for pair in herdr:herdr node:node pnpm:pnpm gh:gh whisper-cpp:whisper-server jq:
   if command -v "$cmd" >/dev/null; then
     ok "$formula"
   else
-    brew install --quiet "$formula"
+    brew_install "$formula"
   fi
 done
 if ! node_ok; then
   echo "    Node $(node --version) is too old (the studio needs 22.16 or later), so it's being updated."
+  brew_writable || die "Homebrew on this Mac belongs to another account ($(stat -f %Su "$(brew --prefix)")), so this one can't update Node. Ask that account to run: brew upgrade node"
   brew upgrade --quiet node 2>/dev/null || brew install --quiet node
   hash -r
   node_ok || die "Node is still $(node --version) at $(command -v node). Remove that one, or put Homebrew's first on the PATH."
 fi
-if command -v claude >/dev/null; then ok "Claude Code"; else brew install --quiet --cask claude-code; fi
+export PATH="$BIN_DIR:$PATH"
+if command -v claude >/dev/null; then
+  ok "Claude Code"
+else
+  install_claude || { echo "    The download dropped part way; trying again over HTTP/1.1."; install_claude http1.1; } ||
+    die "Claude Code didn't install. Check the internet connection, then run ./install.sh again."
+  command -v claude >/dev/null || die "Claude Code installed, but it isn't in $BIN_DIR."
+  ok "Claude Code"
+fi
 # /look takes its screenshots with headless Chrome.
-if [ -d "/Applications/Google Chrome.app" ]; then ok "Google Chrome"; else brew install --quiet --cask google-chrome; fi
+if [ -d "/Applications/Google Chrome.app" ]; then ok "Google Chrome"; else brew_install --cask google-chrome; fi
 
 step "The speech-to-text model for dictation"
 if [ -s "$WHISPER_MODEL" ]; then
