@@ -898,7 +898,7 @@ test('Ask and Plan turns: edits to the app are denied, what a command changed is
       t.withEnv(() => setMode(t.app, mode));
       const submitted = t.hook('prompt-submit', { prompt: mode === 'ask' ? 'Why is the page dark?' : 'Plan a settings page' });
       assert.equal(submitted.status, 0, submitted.stderr);
-      assert.match(submitted.stdout, mode === 'ask' ? /^\[studio\] Ask mode: .*Don't change the app's files/ : /^\[studio\] Plan mode: .*publish it as an artifact/);
+      assert.match(submitted.stdout, mode === 'ask' ? /^\[studio\] Ask mode: .*Don't change the app's files/ : /^\[studio\] Plan mode: .*one question per reply, in plain words, with the answer you recommend.*Never ask her about technical choices.*publish it as an artifact/);
 
       // Edits to the app's files are denied, with the reason, in the shape Claude Code reads; subagents' too.
       const deny = (event) => {

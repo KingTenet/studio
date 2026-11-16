@@ -366,7 +366,7 @@ const ChatStrip = ({ w, onExpand, overlay }: { w: App | null; onExpand: () => vo
 // The chat's switch: what each mode lets Claude do, for the tooltip and the line under it.
 const MODES: { mode: Mode; label: string; tip: string }[] = [
   { mode: 'ask', label: 'Ask', tip: 'Ask: Claude looks into the app and answers. It never changes the app.' },
-  { mode: 'plan', label: 'Plan', tip: 'Plan: Claude works out how to build something and shows you the plan. It never changes the app.' },
+  { mode: 'plan', label: 'Plan', tip: 'Plan: Claude asks you a few questions, one at a time, then shows you the plan. It never changes the app.' },
   { mode: 'build', label: 'Build', tip: 'Build: Claude changes the app, and each change is saved as a checkpoint of the feature.' },
 ]
 
