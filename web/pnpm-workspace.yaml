@@ -1,0 +1,3 @@
+allowBuilds:
+  # Its postinstall only checks versions; onnxruntime-web (via @ricky0123/vad-web) needs none of it.
+  protobufjs: false
