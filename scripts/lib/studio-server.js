@@ -4,7 +4,8 @@
  * The studio's local server, at http://localhost:4000: it serves the cockpit page and the API behind it,
  * for one app (config.appDir) and the Claude session working on it in a herdr pane.
  *
- * The API: /_env/api/state (the app, its Claude pane, the feature being built and the shared prefs), feature/start,
+ * The API: /_env/api/state (the app, its Claude pane, the feature being built, its versions and the shared prefs),
+ * the feature (feature/start, feature/check, feature/keep, feature/discard),
  * the chat (session, session/send),
  * artifacts (list, serve, remove, unnote, artifact-shot), Draw and dropped files (drawing, upload),
  * dictation (listener, transcribe, dictation-log, vad/) and jobs (run: start or resume Claude, rebuild the artifact index).
@@ -28,8 +29,7 @@ const path = require('node:path');
 const { COMMAND_SHELL_MARKER, pausedSessions, processTree, readClosed, runningCommands, withRealSessions } = require('./claude-reaper');
 const { describe: describeArtifacts, folderFor: artifactFolder, locate: locateArtifact, remove: removeArtifacts, removeNote: removeArtifactNote } = require('./artifacts');
 const { paneInput, panePrompt, readTranscript, sessionTitle, transcriptPath } = require('./session-view');
-const { read: readSummary } = require('./summary');
-const { pushInBackground, read: readFeature, start: startFeature } = require('./feature');
+const { discard: discardFeature, keep: keepFeature, nextVersion, pushInBackground, read: readFeature, runGate, start: startFeature, summarise, versions } = require('./feature');
 
 const SCRIPTS = path.resolve(__dirname, '..');
 const WEB_DIST = path.resolve(SCRIPTS, '..', 'web', 'dist');
@@ -1082,6 +1082,7 @@ const state = () => {
       agents: appAgents(snapshot, app.dir, agentCommands(snapshot)).map((agent) => ({ ...agent, title: sessionTitle(agent.sessionId), active: lastActive(agent.sessionId) })),
       paused: pausedOffers(readClosed(), app.dir, runningSessions, livePanes).map((record) => ({ ...record, title: sessionTitle(record.sessionId), active: lastActive(record.sessionId) })),
       ...readFeature(app.dir),
+      versions: versions(app.dir),
     },
     prefs: { tooltips: config.prefs?.tooltips !== false, ui: mergeUiPrefs(config.prefs?.ui) },
   };
@@ -1147,6 +1148,16 @@ const runJob = async (req, res) => {
   streamJob(res, LABEL, script, appInfo().dir);
 };
 
+/** The chat's Claude pane: the app's agent not in the Artifacts tab. */
+const chatAgent = (appDir) => appAgents(herdrSnapshot(), appDir).find((agent) => agent.tab !== 'Artifacts');
+
+/** Answers 409 while the chat's Claude is working or waiting on a question, when `what` (e.g. "Keep it") must wait; true if it did. */
+const refuseWhileBusy = (res, chat, what) => {
+  if (!chat || (chat.status !== 'working' && chat.status !== 'blocked')) return false;
+  sendJson(res, 409, { error: chat.status === 'working' ? `Claude is working. ${what} once it has finished.` : 'Claude is waiting on a question. Answer it first.' });
+  return true;
+};
+
 /**
  * Starts a feature by name (feature.js start: develop reset to main, data/ snapshotted), pushes develop and runs
  * /clear in the chat's Claude pane, so the feature's conversation starts afresh. Refused while Claude is working or
@@ -1159,11 +1170,8 @@ const startFeatureNow = async (req, res) => {
     return;
   }
   const appDir = appInfo().dir;
-  const chat = appAgents(herdrSnapshot(), appDir).find((agent) => agent.tab !== 'Artifacts');
-  if (chat && (chat.status === 'working' || chat.status === 'blocked')) {
-    sendJson(res, 409, { error: chat.status === 'working' ? 'Claude is working. Start the feature once it has finished.' : 'Claude is waiting on a question. Answer it first.' });
-    return;
-  }
+  const chat = chatAgent(appDir);
+  if (refuseWhileBusy(res, chat, 'Start the feature')) return;
   let feature;
   try {
     feature = startFeature(appDir, name);
@@ -1178,6 +1186,55 @@ const startFeatureNow = async (req, res) => {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   sendJson(res, 200, feature);
+};
+
+/**
+ * The first step of Keep: runs the tests it is gated on and writes the feature summary, side by side. Answers
+ * { ok, results, version, summary, summaryFallback }; Keep itself (keepFeatureNow) refuses unless these passed for the same files.
+ */
+const checkFeatureNow = async (req, res) => {
+  const appDir = appInfo().dir;
+  if (refuseWhileBusy(res, chatAgent(appDir), 'Keep it')) return;
+  if (!readFeature(appDir).feature) {
+    sendJson(res, 409, { error: 'No feature is being built.' });
+    return;
+  }
+  const [gate, summary] = await Promise.all([runGate(appDir), summarise(appDir)]);
+  sendJson(res, 200, { ...gate, version: nextVersion(appDir), summary: summary.text, summaryFallback: summary.fallback });
+};
+
+/**
+ * Keeps the feature as the next version ({ summary, anyway }: the summary she saw, and whether she chose to keep it although
+ * its tests fail), then pushes main, its tag and develop in the background.
+ */
+const keepFeatureNow = async (req, res) => {
+  const { summary, anyway } = JSON.parse(await readBody(req, MAX_MESSAGE * 2));
+  const appDir = appInfo().dir;
+  if (refuseWhileBusy(res, chatAgent(appDir), 'Keep it')) return;
+  let kept;
+  try {
+    kept = keepFeature(appDir, { summary: typeof summary === 'string' ? summary : '', anyway: anyway === true });
+  } catch (error) {
+    sendJson(res, 409, { error: error.message });
+    return;
+  }
+  pushInBackground(appDir, ['main']);
+  sendJson(res, 200, kept);
+};
+
+/** Discards the feature: develop back to main, data/ back to how it was at the feature's start; develop is pushed. */
+const discardFeatureNow = async (req, res) => {
+  const appDir = appInfo().dir;
+  if (refuseWhileBusy(res, chatAgent(appDir), 'Discard it')) return;
+  let discarded;
+  try {
+    discarded = discardFeature(appDir);
+  } catch (error) {
+    sendJson(res, 409, { error: error.message });
+    return;
+  }
+  pushInBackground(appDir);
+  sendJson(res, 200, discarded);
 };
 
 // --- the cockpit page and the API --------------------------------------------------------
@@ -1213,20 +1270,6 @@ const handle = async (req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/_env/api/artifacts') {
     sendJson(res, 200, describeArtifacts(appInfo().dir));
-    return;
-  }
-  // The feature panel's summary, and (POST) a fresh one written in the background.
-  if (url.pathname === '/_env/api/summary' && (req.method === 'GET' || req.method === 'POST')) {
-    const appDir = appInfo().dir;
-    if (req.method === 'POST') {
-      if (needsJobHeader(req, res)) return;
-      const { HERDR_WORKSPACE, ...inherited } = process.env;
-      spawn(path.join(SCRIPTS, 'summary.sh'), [appDir], { cwd: appDir, env: { ...inherited, PATH: `${SCRIPTS}:${process.env.PATH}` }, detached: true, stdio: 'ignore' }).unref();
-      // The script marks itself running once it starts; until then the panel would read it as idle.
-      sendJson(res, 202, { ...readSummary(appDir), running: true });
-      return;
-    }
-    sendJson(res, 200, readSummary(appDir));
     return;
   }
   const artifactRoute = /^\/_env\/(api\/)?artifact\/([A-Za-z0-9_-]+)(\/.*)?$/.exec(url.pathname);
@@ -1440,6 +1483,12 @@ const handle = async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/_env/api/feature/start') {
     if (needsJobHeader(req, res)) return;
     await startFeatureNow(req, res);
+    return;
+  }
+  const featureAction = { '/_env/api/feature/check': checkFeatureNow, '/_env/api/feature/keep': keepFeatureNow, '/_env/api/feature/discard': discardFeatureNow }[url.pathname];
+  if (req.method === 'POST' && featureAction) {
+    if (needsJobHeader(req, res)) return;
+    await featureAction(req, res);
     return;
   }
   if (req.method === 'POST' && url.pathname === '/_env/api/run') {

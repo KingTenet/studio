@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { lastReply, nameFromPrompt, read, stateDir, turnLabel } = require('./feature');
+const { discard, keep, lastReply, nameFromPrompt, read, runGate, stateDir, summarise, turnLabel, versions } = require('./feature');
 
 const SCRIPT = path.join(__dirname, 'feature.js');
 const IDENTITY = { GIT_AUTHOR_NAME: 'Her', GIT_AUTHOR_EMAIL: 'her@example.com', GIT_COMMITTER_NAME: 'Her', GIT_COMMITTER_EMAIL: 'her@example.com' };
@@ -256,6 +256,232 @@ test('the hooks do nothing outside the app, or for a subagent', async () => {
     const unconfigured = spawnSync(process.execPath, [SCRIPT, 'stop'], { cwd: t.app, env: { ...process.env, STUDIO_HOME: path.join(t.root, 'empty') }, input: '{}', encoding: 'utf8' });
     assert.equal(unconfigured.status, 0);
     assert.equal(git(t.app, 'symbolic-ref', '--short', 'HEAD'), 'main');
+  } finally {
+    await t.cleanup();
+  }
+});
+
+/**
+ * An app like the template, for Keep: package.json's `npm test` and `npm run typecheck` fail while a file named `broken` (or
+ * `badtypes`) exists, FEATURES.md has v1's entry, and v1 is an annotated tag pushed with main. STUDIO_HOME is set in
+ * this process too, for the in-process calls (keep, discard, runGate are run here, the hooks as Claude Code runs them).
+ */
+const keepSetup = () => {
+  const t = setup();
+  const check = (name) => `node -e "process.exit(require('fs').existsSync('${name}') ? 1 : 0)"`;
+  fs.writeFileSync(path.join(t.app, 'package.json'), JSON.stringify({ name: 'my-app', private: true, scripts: { test: check('broken'), typecheck: check('badtypes') } }, null, 2) + '\n');
+  fs.writeFileSync(path.join(t.app, 'FEATURES.md'), '# Features\n\nWhat each version added.\n\n## v1 Getting Started\n\nA starting point.\n');
+  git(t.app, 'add', '-A');
+  git(t.app, 'commit', '-q', '--amend', '--no-edit');
+  git(t.app, 'tag', '-a', 'v1', '-m', 'v1 Getting Started');
+  git(t.app, 'push', '-q', '--force', '--follow-tags', 'origin', 'main');
+  const saved = process.env.STUDIO_HOME;
+  process.env.STUDIO_HOME = t.home;
+  const summariser = path.join(t.root, 'summarise.sh');
+  fs.writeFileSync(summariser, '#!/bin/sh\necho "A dark page, with a toggle in the corner that remembers your choice."\n', { mode: 0o755 });
+  return {
+    ...t,
+    summariser,
+    cleanup: async () => {
+      if (saved === undefined) delete process.env.STUDIO_HOME;
+      else process.env.STUDIO_HOME = saved;
+      await t.cleanup();
+    },
+  };
+};
+
+const tagObject = (dir, tag) => git(dir, 'rev-parse', `refs/tags/${tag}`);
+const entries = (app) => fs.readFileSync(path.join(app, 'FEATURES.md'), 'utf8').match(/^## v\d+ .*/gm);
+
+/** main moved only by a fast-forward: from `before` to a commit whose parent is it. */
+const assertFastForward = (app, before) => {
+  const after = git(app, 'rev-parse', 'main');
+  assert.equal(git(app, 'rev-parse', `${after}^`), before, 'main moved by one commit on top of where it was');
+  return after;
+};
+
+test('Keep, green: the checkpoints become one commit on main named after the feature, tagged v2, with its summary in FEATURES.md; develop equals main; all reach the remote', async () => {
+  const t = keepSetup();
+  try {
+    const v1 = git(t.app, 'rev-parse', 'main');
+    const v1Tag = tagObject(t.app, 'v1');
+    t.run(['start', 'dark mode']);
+    t.turn('Make the page dark', () => {
+      fs.writeFileSync(path.join(t.app, 'page.html'), '<h1 class="dark">Getting started</h1>\n');
+      fs.writeFileSync(path.join(t.app, 'data', 'app.db'), 'rows: 1');
+    }, 'Checkpoint: Made the page dark');
+    t.turn('And add a toggle', () => fs.writeFileSync(path.join(t.app, 'toggle.js'), 'export const toggle = () => {}\n'), 'Checkpoint: Added a toggle');
+    assert.equal(read(t.app).feature.checkpoints.length, 2);
+
+    // Keep is refused until the tests have run for these files.
+    assert.throws(() => keep(t.app, { summary: 'x' }), /changed since the tests last ran/);
+    const gate = await runGate(t.app);
+    assert.equal(gate.ok, true, JSON.stringify(gate.results));
+    assert.deepEqual(gate.results.map((result) => [result.name, result.ok]), [['Tests', true], ['Type check', true]]);
+    const summary = await summarise(t.app, { command: t.summariser });
+    assert.deepEqual(summary, { text: 'A dark page, with a toggle in the corner that remembers your choice.', fallback: false });
+
+    const kept = keep(t.app, { summary: summary.text });
+    assert.equal(kept.version, 'v2');
+    const v2 = assertFastForward(t.app, v1);
+    assert.equal(kept.sha, v2);
+    assert.equal(git(t.app, 'log', '-1', '--format=%s', 'main'), 'dark mode');
+    assert.equal(git(t.app, 'show', 'main:page.html'), '<h1 class="dark">Getting started</h1>');
+    assert.equal(git(t.app, 'show', 'main:toggle.js'), 'export const toggle = () => {}');
+    assert.equal(git(t.app, 'cat-file', '-p', 'v2').split('\n\n')[1].trim(), 'v2 dark mode', 'an annotated tag, "vN <name>"');
+    assert.equal(git(t.app, 'rev-parse', 'v2^{commit}'), v2);
+    assert.equal(tagObject(t.app, 'v1'), v1Tag, 'v1 is untouched');
+    assert.deepEqual(versions(t.app).map(({ tag, name, sha }) => ({ tag, name, sha })), [{ tag: 'v1', name: 'Getting Started', sha: v1 }, { tag: 'v2', name: 'dark mode', sha: v2 }]);
+
+    // The FEATURES.md entry is part of the version's one commit.
+    assert.deepEqual(entries(t.app), ['## v1 Getting Started', '## v2 dark mode']);
+    assert.match(git(t.app, 'show', 'main:FEATURES.md'), /## v1 Getting Started\n\nA starting point.\n\n## v2 dark mode\n\nA dark page, with a toggle in the corner that remembers your choice.$/);
+
+    assert.equal(git(t.app, 'symbolic-ref', '--short', 'HEAD'), 'develop');
+    assert.equal(git(t.app, 'rev-parse', 'develop'), v2);
+    assert.equal(git(t.app, 'status', '--porcelain'), '', 'nothing left uncommitted');
+    assert.equal(fs.readFileSync(path.join(t.app, 'data', 'app.db'), 'utf8'), 'rows: 1', 'the data stays as it is');
+    assert.equal(read(t.app).feature, null, 'the feature is closed');
+    assert.ok(!fs.existsSync(path.join(stateDir(t.app), 'snapshots')));
+
+    // Pushed as the server does it: develop forced, main plainly with the tags on it.
+    const pushed = t.run(['push', t.app, 'main']);
+    assert.deepEqual(JSON.parse(pushed.stdout), { pushed: ['develop', 'main'], failed: [] }, pushed.stderr);
+    assert.equal(remoteSha(t.origin, 'main'), v2);
+    assert.equal(remoteSha(t.origin, 'develop'), v2);
+    assert.equal(tagObject(t.origin, 'v2'), tagObject(t.app, 'v2'));
+    assert.equal(tagObject(t.origin, 'v1'), v1Tag);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test('Keep with failing tests is refused and moves nothing, then "keep anyway" keeps it; a stale test run or no change is refused', async () => {
+  const t = keepSetup();
+  try {
+    const v1 = git(t.app, 'rev-parse', 'main');
+    t.run(['start', 'nothing yet']);
+    await runGate(t.app);
+    assert.throws(() => keep(t.app, {}), /Nothing has changed since v1, so there is nothing to keep\. Discard "nothing yet" instead\./);
+    assert.throws(() => keep(t.app, { anyway: true }), /Nothing has changed/);
+    discard(t.app);
+
+    t.run(['start', 'search box']);
+    t.turn('Add a search box', () => {
+      fs.writeFileSync(path.join(t.app, 'search.js'), 'export const search = 1\n');
+      fs.writeFileSync(path.join(t.app, 'broken'), '');
+      fs.writeFileSync(path.join(t.app, 'badtypes'), '');
+    }, 'Added a search box. It filters as you type.');
+    const gate = await runGate(t.app);
+    assert.equal(gate.ok, false);
+    assert.deepEqual(gate.results.map((result) => [result.name, result.ok]), [['Tests', false], ['Type check', false]]);
+    assert.ok(gate.results.every((result) => typeof result.output === 'string'));
+
+    const features = fs.readFileSync(path.join(t.app, 'FEATURES.md'), 'utf8');
+    const develop = git(t.app, 'rev-parse', 'develop');
+    assert.throws(() => keep(t.app, { summary: 'A search box.' }), /Tests and Type check failed, so "search box" can't be kept yet\./);
+    assert.equal(git(t.app, 'rev-parse', 'main'), v1, 'main has not moved');
+    assert.equal(git(t.app, 'rev-parse', 'develop'), develop);
+    assert.equal(fs.readFileSync(path.join(t.app, 'FEATURES.md'), 'utf8'), features);
+    assert.deepEqual(versions(t.app).map((version) => version.tag), ['v1']);
+    assert.equal(read(t.app).feature.name, 'search box', 'still open');
+
+    // A green run for other files doesn't count: here, the tests pass once the files are fixed, then a file changes.
+    fs.rmSync(path.join(t.app, 'broken'));
+    fs.rmSync(path.join(t.app, 'badtypes'));
+    assert.equal((await runGate(t.app)).ok, true);
+    fs.writeFileSync(path.join(t.app, 'broken'), '');
+    assert.throws(() => keep(t.app, {}), /changed since the tests last ran/);
+
+    // Keep anyway, with no summary (it failed): the checkpoint labels stand in, and the uncommitted file comes along.
+    const kept = keep(t.app, { anyway: true });
+    assert.equal(kept.version, 'v2');
+    assert.equal(kept.summary, 'Added a search box.');
+    const v2 = assertFastForward(t.app, v1);
+    assert.equal(git(t.app, 'ls-tree', '--name-only', 'main', 'broken'), 'broken');
+    assert.deepEqual(entries(t.app), ['## v1 Getting Started', '## v2 search box']);
+    assert.equal(git(t.app, 'rev-parse', 'develop'), v2);
+
+    // The next feature is v3, on top of v2; v2 stays as it was.
+    const v2Tag = tagObject(t.app, 'v2');
+    t.run(['start', 'fix the tests']);
+    t.turn('Fix the tests', () => fs.rmSync(path.join(t.app, 'broken')), 'Checkpoint: Fixed the tests');
+    assert.equal((await runGate(t.app)).ok, true);
+    assert.equal(keep(t.app, { summary: 'The tests pass again.' }).version, 'v3');
+    assertFastForward(t.app, v2);
+    assert.equal(tagObject(t.app, 'v2'), v2Tag);
+    assert.deepEqual(entries(t.app), ['## v1 Getting Started', '## v2 search box', '## v3 fix the tests']);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test('Discard: develop back to main, new files gone, data/ as it was at the start (logs kept), develop force-pushed; main and tags untouched', async () => {
+  const t = keepSetup();
+  try {
+    const v1 = git(t.app, 'rev-parse', 'main');
+    const v1Tag = tagObject(t.app, 'v1');
+    fs.writeFileSync(path.join(t.app, 'data', 'app.db'), 'rows: 5');
+    t.run(['start', 'oops']);
+    t.turn('Rewrite the page', () => {
+      fs.writeFileSync(path.join(t.app, 'page.html'), '<h1>Oops</h1>\n');
+      fs.writeFileSync(path.join(t.app, 'data', 'app.db'), 'rows: 99');
+      fs.writeFileSync(path.join(t.app, 'data', 'extra.db'), 'new');
+    }, 'Checkpoint: Rewrote the page');
+    assert.ok(await until(() => remoteSha(t.origin, 'develop') === read(t.app).feature.checkpoints[0].sha), 'the checkpoint reached the remote');
+    fs.writeFileSync(path.join(t.app, 'stray.js'), 'not committed\n');
+    fs.writeFileSync(path.join(t.app, 'data', 'logs', 'dev.log'), 'log after');
+
+    assert.deepEqual(discard(t.app), { name: 'oops', checkpoints: 1 });
+    assert.equal(git(t.app, 'symbolic-ref', '--short', 'HEAD'), 'develop');
+    assert.equal(git(t.app, 'rev-parse', 'develop'), v1);
+    assert.equal(git(t.app, 'rev-parse', 'main'), v1);
+    assert.equal(tagObject(t.app, 'v1'), v1Tag);
+    assert.equal(git(t.app, 'status', '--porcelain'), '');
+    assert.equal(fs.readFileSync(path.join(t.app, 'page.html'), 'utf8'), '<h1>Getting started</h1>\n');
+    assert.ok(!fs.existsSync(path.join(t.app, 'stray.js')));
+    assert.deepEqual(fs.readdirSync(path.join(t.app, 'data')).sort(), ['app.db', 'logs']);
+    assert.equal(fs.readFileSync(path.join(t.app, 'data', 'app.db'), 'utf8'), 'rows: 5');
+    assert.equal(fs.readFileSync(path.join(t.app, 'data', 'logs', 'dev.log'), 'utf8'), 'log after');
+    assert.equal(read(t.app).feature, null);
+    assert.throws(() => discard(t.app), /no feature is being built/);
+
+    const pushed = t.run(['push']);
+    assert.deepEqual(JSON.parse(pushed.stdout), { pushed: ['develop'], failed: [] }, pushed.stderr);
+    assert.equal(remoteSha(t.origin, 'develop'), v1);
+    assert.equal(remoteSha(t.origin, 'main'), v1);
+    assert.equal(tagObject(t.origin, 'v1'), v1Tag);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test('summarise falls back to the checkpoint labels when the summariser fails, prints nothing or is too slow', async () => {
+  const t = keepSetup();
+  try {
+    t.run(['start', 'dark mode']);
+    t.turn('Make it dark', () => fs.writeFileSync(path.join(t.app, 'page.html'), 'dark\n'), 'Checkpoint: Made the page dark');
+    t.turn('Add a toggle', () => fs.writeFileSync(path.join(t.app, 'toggle.js'), 'toggle\n'), 'Added a toggle.');
+    const stub = (name, body) => {
+      const file = path.join(t.root, name);
+      fs.writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+      return file;
+    };
+    const fallback = { text: 'Made the page dark. Added a toggle.', fallback: true };
+    assert.deepEqual(await summarise(t.app, { command: stub('fails.sh', 'echo half; exit 1') }), fallback);
+    assert.deepEqual(await summarise(t.app, { command: stub('silent.sh', 'true') }), fallback);
+    assert.deepEqual(await summarise(t.app, { command: path.join(t.root, 'missing.sh') }), fallback);
+    const started = Date.now();
+    assert.deepEqual(await summarise(t.app, { command: stub('slow.sh', 'sleep 30; echo late'), timeoutMs: 300 }), fallback);
+    assert.ok(Date.now() - started < 5000, 'a slow summariser is given up on');
+    // The summariser gets the app's folder, and the digest lists the checkpoints and the changes.
+    const digest = t.run(['digest', t.app]);
+    assert.equal(digest.status, 0, digest.stderr);
+    const text = fs.readFileSync(digest.stdout.trim(), 'utf8');
+    assert.match(text, /# The feature: dark mode/);
+    assert.match(text, /1\. Made the page dark\n   She asked: Make it dark/);
+    assert.match(text, /toggle\.js/);
+    assert.match(text, /## v1 Getting Started/);
   } finally {
     await t.cleanup();
   }

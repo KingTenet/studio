@@ -31,6 +31,15 @@ export type Checkpoint = {
 /** The feature being built: develop, from main at `base`, with a checkpoint per Build turn that changed files. */
 export type Feature = { name: string; startedAt: string; base: string; checkpoints: Checkpoint[] }
 
+/** A version kept: main at its annotated tag `tag` (v1, v2…), named after the feature it added. */
+export type Version = { tag: string; name: string; sha: string; at: string }
+
+/** How one of the tests Keep is gated on went (`npm test`, `npm run typecheck`): the last of its output. */
+export type GateResult = { name: string; ok: boolean; output: string }
+
+/** Keep's first step: the tests, the version it would become and the summary for FEATURES.md (the checkpoints' labels when `summaryFallback`). */
+export type FeatureCheck = { ok: boolean; results: GateResult[]; version: string; summary: string; summaryFallback: boolean }
+
 /** The app being built, its Claude sessions and what its buttons started, as /_env/api/state reports them. */
 export type App = {
   /** Its folder. */
@@ -49,6 +58,8 @@ export type App = {
   feature: Feature | null
   /** Branches whose last push failed, tried again with the next commit. */
   unpushed: string[]
+  /** The versions kept so far, oldest first. */
+  versions: Version[]
 }
 
 export type ControlState = {

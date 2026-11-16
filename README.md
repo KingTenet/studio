@@ -26,12 +26,12 @@ This updates Studio, starts its herdr workspace (Claude, the cockpit's server, t
 
 - `bin/studio`: the `studio up` command.
 - `scripts/lib/studio-server.js`: the local server behind the page. It serves the cockpit and the API for chat, artifacts, drawing, uploads, dictation and jobs.
-- `scripts/lib/feature.js`: features and checkpoints. The app's repo has `main` (the versions kept) and `develop` (the feature being built). Starting a feature resets `develop` to `main`; after every turn that changed files, the Stop hook commits a checkpoint on `develop`, labelled from the reply's `Checkpoint:` line, snapshots `data/` and pushes in the background (a failed push is retried with the next one and by `studio up`).
-- `scripts/`: the jobs the cockpit's buttons run (start or resume Claude, rebuild the artifact index, write the summary) and `cc-command.sh` (slash commands queued for the pane).
+- `scripts/lib/feature.js`: features and checkpoints. The app's repo has `main` (the versions kept) and `develop` (the feature being built). Starting a feature resets `develop` to `main`; after every turn that changed files, the Stop hook commits a checkpoint on `develop`, labelled from the reply's `Checkpoint:` line, snapshots `data/` and pushes in the background (a failed push is retried with the next one and by `studio up`). Keep runs the app's `npm test` and `npm run typecheck`, then squashes the checkpoints into one commit on `main` named after the feature (with its summary added to the app's `FEATURES.md`), tags it v(N+1) and pushes; Discard resets `develop` to `main` and puts `data/` back as it was when the feature started.
+- `scripts/`: the jobs the cockpit's buttons run (start or resume Claude, rebuild the artifact index), `feature-summary.sh` (what a feature does, for Keep and `FEATURES.md`; `STUDIO_SUMMARY_CMD` stands in for it) and `cc-command.sh` (slash commands queued for the pane).
 - `web/`: the cockpit page (React, built into a single `web/dist/cockpit.html`).
 - `hooks/studio-hook.py`: Claude Code hooks that tell the cockpit which session a pane runs and pass on what the page showed.
 - `claude/settings.json`: the settings Claude runs with inside the studio (`claude --settings`).
-- `skills/`: the skills Claude has here: artifact-index, debrief, diagnose, grill-me, handoff, look (a screenshot of a page of the app, by `scripts/look.sh`), prototype, seed-data (runs the app's `scripts/seed-data.ts`), tdd, worktree-summary. Claude loads them with this folder as a plugin (`claude --plugin-dir`, named in `.claude-plugin/plugin.json`), so each can also be called as `/studio:<name>`.
+- `skills/`: the skills Claude has here: artifact-index, debrief, diagnose, grill-me, handoff, look (a screenshot of a page of the app, by `scripts/look.sh`), prototype, seed-data (runs the app's `scripts/seed-data.ts`), tdd, feature-summary (run headless by `scripts/feature-summary.sh`). Claude loads them with this folder as a plugin (`claude --plugin-dir`, named in `.claude-plugin/plugin.json`), so each can also be called as `/studio:<name>`.
 
 ## Develop
 

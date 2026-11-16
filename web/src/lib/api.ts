@@ -1,4 +1,4 @@
-import type { ArtifactNote, ArtifactsView, ControlState, SessionView } from './types'
+import type { ArtifactNote, ArtifactsView, ControlState, FeatureCheck, SessionView } from './types'
 
 const API = '/_env/api'
 const HEADERS = { 'Content-Type': 'application/json', 'X-Studio': '1' }
@@ -65,6 +65,22 @@ export const startFeature = async (name: string): Promise<string | null> => {
     return "The studio isn't answering, so the feature could not be started."
   }
 }
+/** Posts a feature action, resolving to the server's answer or { error } to show. */
+const featureAction = async <T>(path: string, body: unknown, failed: string): Promise<T | { error: string }> => {
+  try {
+    const res = await post(path, body)
+    const json = (await res.json().catch(() => ({}))) as T & { error?: string }
+    return res.ok ? json : { error: json.error ?? failed }
+  } catch {
+    return { error: "The studio isn't answering. " + failed }
+  }
+}
+/** Keep's first step: runs the app's tests and type check and writes the feature's summary (slow: tens of seconds). */
+export const checkFeature = () => featureAction<FeatureCheck>('/feature/check', {}, 'The tests could not be run.')
+/** Keeps the feature as the next version, with the summary she saw; `anyway` keeps it although its tests fail. */
+export const keepFeature = (summary: string, anyway: boolean) => featureAction<{ version: string; sha: string; summary: string }>('/feature/keep', { summary, anyway }, 'The feature could not be kept.')
+/** Throws the feature away: the code back to the latest version, the data back to how it was when the feature started. */
+export const discardFeature = () => featureAction<{ name: string; checkpoints: number }>('/feature/discard', {}, 'The feature could not be discarded.')
 export const setTooltips = (tooltips: boolean) => post('/prefs', { tooltips })
 /** Saves one UI setting every page shares (useSharedPref). */
 export const setUiPref = (key: string, value: unknown) => post('/prefs', { ui: { [key]: value } })
@@ -176,28 +192,6 @@ export const getArtifacts = async (): Promise<ArtifactsView | null> => {
   try {
     const res = await fetch(API + '/artifacts')
     return res.ok ? ((await res.json()) as ArtifactsView) : null
-  } catch {
-    return null
-  }
-}
-
-export type WorktreeSummary = { summary: { text: string; at: string; sessions: number } | null; running: boolean }
-
-/** The app's summary of its chats (summary.js), or null while the studio server isn't answering. */
-export const getSummary = async (): Promise<WorktreeSummary | null> => {
-  try {
-    const res = await fetch(API + '/summary')
-    return res.ok ? ((await res.json()) as WorktreeSummary) : null
-  } catch {
-    return null
-  }
-}
-
-/** Starts writing a fresh summary in the background (summary.sh). */
-export const refreshSummary = async (): Promise<WorktreeSummary | null> => {
-  try {
-    const res = await post('/summary', {})
-    return res.ok ? ((await res.json()) as WorktreeSummary) : null
   } catch {
     return null
   }

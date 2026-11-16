@@ -16,18 +16,27 @@
  *   push.json         { pending: { <branch>: { at, error } } }: the branches whose last push failed
  *   snapshots/<sha>/  the app's data/ (without logs/) as it was at that commit: the feature's start (base) and
  *                     each checkpoint. Starting a feature drops the previous feature's.
+ *   gate.json         the last run of the tests Keep is gated on: { tree, ok, at, results: [{ name, ok, output }] }, for the
+ *                     files as they were (tree), so Keep knows whether they still hold
+ *   summary-digest.md what the feature summary (feature-summary.sh) is written from
+ *
+ * Keeping a feature squashes its checkpoints into one commit on main named after it (main only ever fast-forwards),
+ * with its summary added to the app's FEATURES.md, tags it v(N+1) and leaves develop equal to main. Discarding it
+ * resets develop to main and puts data/ back as it was when the feature started. Either way the feature closes.
  *
  * Usage: node lib/feature.js prompt-submit         UserPromptSubmit hook: notes the prompt; starts a feature if none is open
  *        node lib/feature.js stop                  Stop hook: commits a checkpoint if the turn changed files
  *        node lib/feature.js start <name> [app]    start a feature (the cockpit's server does this, and runs /clear)
- *        node lib/feature.js push [app]            push develop and every branch whose push failed
+ *        node lib/feature.js push [app] [branch…]  push develop, those branches and every branch whose push failed
  *        node lib/feature.js show [app]            the open feature and pending pushes, as JSON
+ *        node lib/feature.js digest [app]          write the summary's digest of the open feature; prints its path
  * The hooks do nothing outside the app's folder, or without the app's repo.
  *
  * Run tests: node --test lib/feature.test.js
  */
 
 const { execFileSync, spawn } = require('node:child_process');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -55,7 +64,7 @@ const configuredApp = () => path.resolve(readJson(path.join(studioHome(), 'confi
 const stateDir = (appDir) => path.join(studioHome(), 'features', path.resolve(appDir).replace(/[^A-Za-z0-9]/g, '-'));
 const files = (appDir) => {
   const dir = stateDir(appDir);
-  return { dir, feature: path.join(dir, 'feature.json'), turn: path.join(dir, 'turn.json'), push: path.join(dir, 'push.json'), snapshots: path.join(dir, 'snapshots') };
+  return { dir, feature: path.join(dir, 'feature.json'), turn: path.join(dir, 'turn.json'), push: path.join(dir, 'push.json'), snapshots: path.join(dir, 'snapshots'), gate: path.join(dir, 'gate.json'), digest: path.join(dir, 'summary-digest.md') };
 };
 
 const git = (appDir, ...args) => execFileSync('git', ['-C', appDir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }).trim();
@@ -106,6 +115,16 @@ const snapshotData = (appDir, sha) => {
     fs.cpSync(from, to, { recursive: true, mode: fs.constants.COPYFILE_FICLONE, filter: (source) => source !== path.join(from, 'logs') });
   }
   return to;
+};
+
+/** Puts the app's data/ back as a snapshot has it: everything in it but logs/ is removed, then the snapshot copied in. */
+const restoreData = (appDir, sha) => {
+  const from = path.join(files(appDir).snapshots, sha);
+  if (!fs.existsSync(from)) throw new Error(`there is no snapshot of the app's data for ${sha.slice(0, 7)}`);
+  const to = path.join(appDir, 'data');
+  fs.mkdirSync(to, { recursive: true });
+  for (const name of fs.readdirSync(to)) if (name !== 'logs') fs.rmSync(path.join(to, name), { recursive: true, force: true });
+  fs.cpSync(from, to, { recursive: true, mode: fs.constants.COPYFILE_FICLONE });
 };
 
 /**
@@ -166,20 +185,23 @@ const hasBranch = (appDir, branch) => {
   }
 };
 
-/** The `git push` arguments for a branch: develop is rewritten (start, discard, go back), so it is always forced. */
-const pushArgs = (branch) => (branch === 'develop' ? ['push', '--force', 'origin', 'develop'] : ['push', 'origin', branch]);
+/**
+ * The `git push` arguments for a branch: develop is rewritten (start, discard, go back), so it is always forced. Any other
+ * (main) is pushed plainly with the version tags on it, which are never forced either.
+ */
+const pushArgs = (branch) => (branch === 'develop' ? ['push', '--force', 'origin', 'develop'] : ['push', '--follow-tags', 'origin', branch]);
 
 /**
- * Pushes develop (once there is one) and every branch whose last push failed, noting each failure in push.json for the next try
- * and clearing it on success. Nothing happens without an origin remote. Returns { pushed, failed }.
+ * Pushes develop (once there is one), the branches in `also` and every branch whose last push failed, noting each failure in
+ * push.json for the next try and clearing it on success. Nothing happens without an origin remote. Returns { pushed, failed }.
  */
-const push = (appDir) => {
+const push = (appDir, also = []) => {
   if (!hasOrigin(appDir)) return { pushed: [], failed: [] };
   const { push: file } = files(appDir);
   return withLock(
     appDir,
     () => {
-      const branches = [...new Set(['develop', ...Object.keys(readJson(file, {}).pending ?? {})])].filter((branch) => hasBranch(appDir, branch));
+      const branches = [...new Set(['develop', ...also, ...Object.keys(readJson(file, {}).pending ?? {})])].filter((branch) => hasBranch(appDir, branch));
       const outcome = branches.map((branch) => {
         try {
           execFileSync('git', ['-C', appDir, ...pushArgs(branch)], { stdio: ['ignore', 'ignore', 'pipe'], timeout: PUSH_TIMEOUT_MS, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
@@ -202,7 +224,231 @@ const push = (appDir) => {
 };
 
 /** Pushes in a process of its own, so a hook or the server returns at once however slow (or stuck) the network is. */
-const pushInBackground = (appDir) => spawn(process.execPath, [__filename, 'push', appDir], { detached: true, stdio: 'ignore' }).unref();
+const pushInBackground = (appDir, also = []) => spawn(process.execPath, [__filename, 'push', appDir, ...also], { detached: true, stdio: 'ignore' }).unref();
+
+// --- keeping or discarding the feature -----------------------------------------------------
+
+const GATE = [
+  { name: 'Tests', args: ['test'] },
+  { name: 'Type check', args: ['run', 'typecheck'] },
+];
+const GATE_TIMEOUT_MS = 5 * 60_000;
+const SUMMARY_TIMEOUT_MS = 90_000;
+const MAX_OUTPUT = 4000;
+const MAX_SUMMARY = 2000;
+const MAX_DIFF = 40_000;
+
+/**
+ * Runs a command in a process group of its own, resolving to { code, stdout, output } (output is stdout and stderr together,
+ * its last part); after timeoutMs the whole group is killed, so a hung test run or summary never holds Keep up.
+ */
+const runCommand = (command, args, { cwd, env = process.env, timeoutMs }) =>
+  new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (error) {
+      resolve({ code: -1, stdout: '', output: error.message });
+      return;
+    }
+    let stdout = '';
+    let output = '';
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+      output = (output + chunk).slice(-MAX_OUTPUT * 4);
+    });
+    child.stderr.on('data', (chunk) => {
+      output = (output + chunk).slice(-MAX_OUTPUT * 4);
+    });
+    const timer = setTimeout(() => {
+      output += `\n(stopped after ${Math.round(timeoutMs / 1000)} s)`;
+      try {
+        process.kill(-child.pid, 'SIGKILL');
+      } catch {}
+    }, timeoutMs);
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      resolve({ code: -1, stdout, output: error.message });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code: code ?? -1, stdout, output });
+    });
+  });
+
+/** The git tree of the app's files as they are now, committed or not (a throwaway index, so the real one is untouched). */
+const workTree = (appDir) => {
+  const index = path.join(os.tmpdir(), `studio-index-${crypto.randomUUID()}`);
+  const env = { ...process.env, GIT_INDEX_FILE: index, GIT_TERMINAL_PROMPT: '0' };
+  try {
+    // Starting from the real index lets git skip the files it already knows are unchanged.
+    fs.copyFileSync(path.resolve(appDir, git(appDir, 'rev-parse', '--git-path', 'index')), index);
+  } catch {}
+  try {
+    execFileSync('git', ['-C', appDir, 'add', '-A'], { stdio: 'ignore', env });
+    return execFileSync('git', ['-C', appDir, 'write-tree'], { encoding: 'utf8', env }).trim();
+  } finally {
+    fs.rmSync(index, { force: true });
+  }
+};
+
+/** The versions kept so far, oldest first: [{ tag: 'v2', name, sha, at }] from the app's annotated v<N> tags. */
+const versions = (appDir) => {
+  let out;
+  try {
+    out = git(appDir, 'for-each-ref', '--sort=version:refname', '--format=%(refname:short)%09%(*objectname)%09%(objectname)%09%(creatordate:iso-strict)%09%(contents:subject)', 'refs/tags/v*');
+  } catch {
+    return [];
+  }
+  return out
+    .split('\n')
+    .map((line) => line.split('\t'))
+    .filter(([tag]) => /^v\d+$/.test(tag ?? ''))
+    .map(([tag, commit, object, at, subject = '']) => ({ tag, name: subject.replace(new RegExp(`^${tag}\\s+`), ''), sha: commit || object, at }));
+};
+
+/** The tag the next version kept gets: one past the highest so far. */
+const nextVersion = (appDir) => `v${Math.max(0, ...versions(appDir).map((version) => Number(version.tag.slice(1)))) + 1}`;
+
+/** What the feature does when no summary could be written: its checkpoints' labels, as sentences. */
+const fallbackSummary = (feature) =>
+  feature.checkpoints.map(({ label }) => (/[.!?]$/.test(label) ? label : label + '.')).join(' ') || `${feature.name}.`;
+
+/**
+ * Runs the tests Keep is gated on (the app's `npm test` and `npm run typecheck`, side by side) and notes how they went in
+ * gate.json, for the files as they are now. Resolves to { ok, results: [{ name, ok, output }] }.
+ */
+const runGate = async (appDir, now = new Date()) => {
+  const tree = workTree(appDir);
+  const env = { ...process.env, CI: '1', NO_COLOR: '1', FORCE_COLOR: '0' };
+  const results = await Promise.all(
+    GATE.map(async ({ name, args }) => {
+      const { code, output } = await runCommand('npm', args, { cwd: appDir, env, timeoutMs: GATE_TIMEOUT_MS });
+      return { name, ok: code === 0, output: output.replace(/\x1b\[[0-9;]*m/g, '').trim().slice(-MAX_OUTPUT) };
+    })
+  );
+  const gate = { tree, ok: results.every((result) => result.ok), at: now.toISOString(), results };
+  writeJson(files(appDir).gate, gate);
+  return { ok: gate.ok, results };
+};
+
+/**
+ * Writes what the feature summary is written from: the feature's name, each checkpoint with what she asked for, the files
+ * changed and the changes themselves (cut short when long), and FEATURES.md so far. Returns the file's path.
+ */
+const writeDigest = (appDir) => {
+  const feature = read(appDir).feature;
+  if (!feature) throw new Error('no feature is being built');
+  const tree = workTree(appDir);
+  const diff = git(appDir, 'diff', 'main', tree, '--', '.', ':(exclude)FEATURES.md');
+  const features = (() => {
+    try {
+      return fs.readFileSync(path.join(appDir, 'FEATURES.md'), 'utf8').trim();
+    } catch {
+      return '(none yet)';
+    }
+  })();
+  const text = [
+    `# The feature: ${feature.name}`,
+    '## Its checkpoints, oldest first, each with what she asked for',
+    feature.checkpoints.map((checkpoint, i) => `${i + 1}. ${checkpoint.label}${checkpoint.prompt ? `\n   She asked: ${checkpoint.prompt.replace(/\s+/g, ' ')}` : ''}`).join('\n') || '(none: the changes below were never checkpointed)',
+    '## Files changed',
+    git(appDir, 'diff', '--stat', 'main', tree) || '(none)',
+    '## The changes',
+    '```diff\n' + (diff.length > MAX_DIFF ? diff.slice(0, MAX_DIFF) + '\n[… the rest left out]' : diff) + '\n```',
+    '## FEATURES.md so far',
+    features,
+  ].join('\n\n');
+  fs.writeFileSync(files(appDir).digest, text + '\n');
+  return files(appDir).digest;
+};
+
+/**
+ * What the open feature does, in plain words, for FEATURES.md and the Keep card: { text, fallback }. Written by Claude, headless
+ * (feature-summary.sh, or STUDIO_SUMMARY_CMD, run with the app's folder); when that fails, says nothing or takes longer than
+ * timeoutMs, it falls back to the checkpoints' labels (fallback true).
+ */
+const summarise = async (appDir, { command = process.env.STUDIO_SUMMARY_CMD || path.join(__dirname, '..', 'feature-summary.sh'), timeoutMs = SUMMARY_TIMEOUT_MS } = {}) => {
+  const feature = read(appDir).feature;
+  if (!feature) throw new Error('no feature is being built');
+  // Not as a herdr pane's process, so the headless Claude never shows as one of the app's sessions.
+  const { HERDR_WORKSPACE, HERDR_PANE_ID, ...env } = process.env;
+  const { code, stdout } = await runCommand(command, [appDir], { cwd: appDir, env, timeoutMs });
+  const text = code === 0 ? stdout.trim().slice(0, MAX_SUMMARY) : '';
+  return text ? { text, fallback: false } : { text: fallbackSummary(feature), fallback: true };
+};
+
+/** Closes the feature: its state, snapshots, test run and digest go. */
+const close = (appDir) => {
+  const { feature, snapshots, gate, digest } = files(appDir);
+  for (const file of [feature, snapshots, gate, digest]) fs.rmSync(file, { recursive: true, force: true });
+};
+
+/**
+ * Keeps the open feature as the next version: the app's files as they are (checkpointed or not) and its summary added to
+ * FEATURES.md become one commit on main named after it, main fast-forwards to it, it is tagged v(N+1) ("vN <name>"), and
+ * develop (still checked out) is left equal to main. Refused unless the tests passed for exactly these files, or with
+ * `anyway`. Nothing moves when it fails part way. Returns { version, sha, summary }; push with pushInBackground(appDir, ['main']).
+ */
+const keep = (appDir, { summary, anyway = false } = {}) =>
+  withLock(appDir, () => {
+    const feature = read(appDir).feature;
+    if (!feature) throw new Error('no feature is being built');
+    if (git(appDir, 'symbolic-ref', '--short', '-q', 'HEAD') !== 'develop') throw new Error('the app is not on develop, so the feature cannot be kept');
+    const main = git(appDir, 'rev-parse', 'main');
+    try {
+      git(appDir, 'merge-base', '--is-ancestor', main, 'HEAD');
+    } catch {
+      throw new Error("develop doesn't start from the latest version, so keeping it would rewrite one");
+    }
+    const tree = workTree(appDir);
+    const latest = versions(appDir).at(-1)?.tag ?? 'the last version';
+    if (tree === git(appDir, 'rev-parse', `${main}^{tree}`)) throw new Error(`Nothing has changed since ${latest}, so there is nothing to keep. Discard "${feature.name}" instead.`);
+    if (!anyway) {
+      const gate = readJson(files(appDir).gate, null);
+      if (!gate || gate.tree !== tree) throw new Error('The app has changed since the tests last ran. Run them again first.');
+      if (!gate.ok) throw new Error(`${gate.results.filter((result) => !result.ok).map((result) => result.name).join(' and ')} failed, so "${feature.name}" can't be kept yet.`);
+    }
+    const version = nextVersion(appDir);
+    const text = String(summary ?? '').trim().slice(0, MAX_SUMMARY) || fallbackSummary(feature);
+    const featuresFile = path.join(appDir, 'FEATURES.md');
+    const before = fs.existsSync(featuresFile) ? fs.readFileSync(featuresFile, 'utf8') : null;
+    const sha = (() => {
+      try {
+        fs.writeFileSync(featuresFile, `${before === null ? '# Features\n' : before.replace(/\n*$/, '\n')}\n## ${version} ${feature.name}\n\n${text}\n`);
+        // The version's commit, made beside develop so nothing has moved if it can't be made (no git identity, say).
+        const made = git(appDir, 'commit-tree', workTree(appDir), '-p', main, '-m', feature.name);
+        // From where main was, to a commit whose parent that is: only ever a fast-forward.
+        git(appDir, 'update-ref', 'refs/heads/main', made, main);
+        return made;
+      } catch (error) {
+        if (before === null) fs.rmSync(featuresFile, { force: true });
+        else fs.writeFileSync(featuresFile, before);
+        throw error;
+      }
+    })();
+    git(appDir, 'tag', '-a', version, '-m', `${version} ${feature.name}`, sha);
+    // develop to the version too, its index with it; the files on disk are that version's already.
+    git(appDir, 'reset', '-q', '--mixed', sha);
+    close(appDir);
+    return { version, sha, summary: text };
+  });
+
+/**
+ * Discards the open feature: develop is reset to main (changes not committed, and new files git doesn't ignore, go too) and
+ * data/ is put back as it was when the feature started. Returns { name, checkpoints } (how many were lost); push develop after.
+ */
+const discard = (appDir) =>
+  withLock(appDir, () => {
+    const feature = read(appDir).feature;
+    if (!feature) throw new Error('no feature is being built');
+    if (!fs.existsSync(path.join(files(appDir).snapshots, feature.base))) throw new Error("the snapshot of the app's data from the feature's start is missing, so it can't be put back");
+    git(appDir, 'checkout', '-q', '-f', '-B', 'develop', 'main');
+    git(appDir, 'clean', '-q', '-f', '-d');
+    restoreData(appDir, feature.base);
+    close(appDir);
+    return { name: feature.name, checkpoints: feature.checkpoints.length };
+  });
 
 const CHECKPOINT_LINE = /^[\s>*_`-]*checkpoint[*_`]*\s*:\s*(.+?)\s*$/gim;
 const MAX_LABEL = 200;
@@ -326,13 +572,15 @@ if (require.main === module) {
     print(start(appDir, args[0]));
     pushInBackground(appDir);
   } else if (command === 'push') {
-    print(push(path.resolve(args[0] ?? configuredApp())));
+    print(push(path.resolve(args[0] ?? configuredApp()), args.slice(1)));
   } else if (command === 'show') {
     print(read(path.resolve(args[0] ?? configuredApp())));
+  } else if (command === 'digest') {
+    process.stdout.write(writeDigest(path.resolve(args[0] ?? configuredApp())) + '\n');
   } else {
-    process.stderr.write('usage: feature.js prompt-submit|stop|start <name> [app dir]|push [app dir]|show [app dir]\n');
+    process.stderr.write('usage: feature.js prompt-submit|stop|start <name> [app dir]|push [app dir] [branch…]|show [app dir]|digest [app dir]\n');
     process.exit(1);
   }
 }
 
-module.exports = { checkpoint, lastReply, nameFromPrompt, notePrompt, onPromptSubmit, onStop, push, pushInBackground, read, snapshotData, start, stateDir, turnLabel, turnMode };
+module.exports = { checkpoint, discard, fallbackSummary, keep, lastReply, nameFromPrompt, nextVersion, notePrompt, onPromptSubmit, onStop, push, pushInBackground, read, restoreData, runGate, snapshotData, start, stateDir, summarise, turnLabel, turnMode, versions, withLock, writeDigest };
