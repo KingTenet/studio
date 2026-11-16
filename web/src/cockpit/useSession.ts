@@ -14,10 +14,12 @@ export type SessionState = {
   prompt: SessionPrompt | null
   /** Text typed into the pane in herdr but not sent. */
   input: string
+  /** Claude Code's line saying a usage limit was hit, while it shows. */
+  limit: string | null
   screen: string
 }
 
-const empty = (paneId: string | null): SessionState => ({ paneId, sessionId: null, offset: undefined, messages: [], status: null, prompt: null, input: '', screen: '' })
+const empty = (paneId: string | null): SessionState => ({ paneId, sessionId: null, offset: undefined, messages: [], status: null, prompt: null, input: '', limit: null, screen: '' })
 
 /**
  * The selected pane's transcript, read incrementally every second while the page is visible (only
@@ -46,7 +48,7 @@ export const useSession = (label: string, paneId: string | null, view: ChatView,
       const read = await getSession(params)
       if (!read || current.current.paneId !== target) return
       const messages = read.reset || read.sessionId !== was.sessionId ? read.messages : [...was.messages, ...read.messages]
-      setSession({ paneId: target, sessionId: read.sessionId, offset: read.offset, messages, status: read.status, prompt: read.prompt, input: read.input, screen: read.screen ?? '' })
+      setSession({ paneId: target, sessionId: read.sessionId, offset: read.offset, messages, status: read.status, prompt: read.prompt, input: read.input, limit: read.limit ?? null, screen: read.screen ?? '' })
     } catch {
     } finally {
       polling.current = false

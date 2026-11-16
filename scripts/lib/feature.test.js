@@ -663,12 +663,15 @@ test('A change holding a value from .env is never committed: Claude is told to m
     assert.match(stopped.stderr, /ai\.js has the value of OPENAI_KEY\. Secrets belong in \.env only\. Take the value out of the code and read it with process\.env\.OPENAI_KEY instead/);
     assert.equal(git(t.app, 'rev-parse', 'HEAD'), head);
     for (const output of [blocked.reason, stopped.stdout, stopped.stderr]) assert.ok(!output.includes(KEY) && !output.includes(QUOTED), 'no value in what is said');
+    // The cockpit can say why there's no checkpoint (names only).
+    assert.equal(read(t.app).refused.leaks, 'ai.js has the value of OPENAI_KEY');
 
     // Moved to process.env: the checkpoint is made, with the prompt of the turn; a value shorter than 8 characters doesn't count.
     write('ai.js', `const key = process.env.OPENAI_KEY\nconst pin = 'abc1234'\n`);
     stopped = stop(true);
     assert.equal(stopped.stdout, '', stopped.stderr);
     const [made] = read(t.app).feature.checkpoints;
+    assert.equal(read(t.app).refused, null, 'a saved checkpoint clears it');
     assert.equal(made.label, 'Added the AI helper');
     assert.equal(made.prompt, 'Add an AI helper');
     assert.equal(git(t.app, 'rev-parse', 'HEAD'), made.sha);

@@ -269,6 +269,21 @@ const paneInput = (ansiScreen) => {
   return '';
 };
 
+const USAGE_LIMIT = /You(?:'|’)ve hit your\b.*?\blimit\b.*$/;
+// Claude's own replies start with ⏺: one below the limit line means Claude has carried on since.
+const REPLY = /^\s*⏺/;
+
+/**
+ * Claude Code's own line saying a usage limit was hit (`You've hit your session limit · resets 3:45pm`), from a pane's
+ * screen; null when there is none, or when Claude has replied again below it (the limit has reset and it carried on).
+ */
+const usageLimit = (screenText) => {
+  const lines = stripAnsi(screenText).replace(/\r/g, '').split('\n');
+  const at = lines.findLastIndex((line) => USAGE_LIMIT.test(line));
+  if (at < 0 || lines.slice(at + 1).some((line) => REPLY.test(line))) return null;
+  return USAGE_LIMIT.exec(lines[at])[0].replace(/[\s│]+$/, '');
+};
+
 const OPTION = /^\s*(?:❯\s*)?(\d)\.\s+(.+?)\s*$/;
 const CHECKBOX = /^\[([ ✔x])\]\s*/;
 // A multi-select question ends its checkboxes with an unnumbered button: Next, or Submit on the last question.
@@ -342,4 +357,4 @@ const panePrompt = (screenText) => {
   return { question: question ?? '', options, focused, ...(submit && { submit }) };
 };
 
-module.exports = { paneInput, panePrompt, readTranscript, recordMessages, sessionTitle, stripAnsi, transcriptPath, unstyledText };
+module.exports = { paneInput, panePrompt, readTranscript, recordMessages, sessionTitle, stripAnsi, transcriptPath, unstyledText, usageLimit };

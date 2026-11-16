@@ -94,6 +94,15 @@ export const restoreVersion = (tag: string) => featureAction<{ version: string; 
 /** Sets the chat's Ask / Plan / Build switch, from her next message on (and Claude's effort for it). */
 export const setMode = (mode: Mode) => featureAction<{ mode: Mode }>('/mode', { mode }, 'The mode could not be changed.')
 export const setTooltips = (tooltips: boolean) => post('/prefs', { tooltips })
+/** The last 50 lines of the app's dev server output (data/logs/dev.log), '' when there are none or the server isn't answering. */
+export const getAppLog = async (): Promise<string> => {
+  try {
+    const res = await fetch(API + '/app/log')
+    return res.ok ? ((await res.json()) as { tail: string }).tail : ''
+  } catch {
+    return ''
+  }
+}
 /** Saves one UI setting every page shares (useSharedPref). */
 export const setUiPref = (key: string, value: unknown) => post('/prefs', { ui: { [key]: value } })
 export const getSession = async (params: URLSearchParams): Promise<SessionView | null> => {

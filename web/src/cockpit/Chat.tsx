@@ -1,4 +1,4 @@
-import { Check, ChevronRight, ChevronsLeft, Clock, Crosshair, Keyboard, Layers, LoaderCircle, Paperclip, Pause, Play, X } from 'lucide-react'
+import { Check, ChevronRight, ChevronsLeft, Clock, Crosshair, Hourglass, Keyboard, Layers, LoaderCircle, Paperclip, Pause, Play, PlugZap, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type ReactNode } from 'react'
 import { SmartLink } from '@/components/controls/ArtifactLink'
 import { useControls } from '@/components/controls/ControlsProvider'
@@ -209,6 +209,32 @@ const WorkingRow = ({ agent, messages, duration }: { agent: Agent; messages: Cha
           {step}
         </span>
       )}
+    </div>
+  )
+}
+
+/** Claude Code's own line saying a usage limit was hit; Claude carries on by itself once it resets. */
+const LimitRow = ({ text }: { text: string }) => (
+  <div className="grid gap-0.5 rounded-lg border border-amber-600/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200" role="status">
+    <span className="flex items-center gap-2 font-medium">
+      <Hourglass className="size-4 shrink-0" /> {text}
+    </span>
+    <span className="text-xs">Claude carries on by itself once it resets. Everything made so far is saved.</span>
+  </div>
+)
+
+/** The reaper started the chat's Claude again after it died: said for a while (the server stops reporting it), or until hidden. */
+const ReconnectedRow = ({ at, onDismiss }: { at: string; onDismiss: () => void }) => {
+  const tip = useTip()
+  return (
+    <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-sm" role="status">
+      <PlugZap className="size-4 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1">
+        <b className="font-medium">Reconnected</b> at {new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Claude had stopped, so it was started again where it left off.
+      </span>
+      <Button size="icon-xs" variant="ghost" aria-label="Hide" title={tip('Hide')} onClick={onDismiss}>
+        <X />
+      </Button>
     </div>
   )
 }
@@ -457,6 +483,8 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
   const { session, poll } = useSession(label, agent?.paneId ?? stopped?.paneId ?? null, view, stopped?.sessionId ?? null)
   const [text, setText] = useState('')
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null)
+  const [hiddenReconnect, setHiddenReconnect] = useState<string | null>(null)
+  const reconnected = w?.reconnected && w.reconnected.at !== hiddenReconnect ? w.reconnected : null
   // A message on its way: shown faded until the transcript has more messages than when it was sent.
   const [sending, setSending] = useState<{ paneId: string; text: string; count: number } | null>(null)
   // A message sent with no feature open waits here while she names one; it is sent once the feature has started.
@@ -758,6 +786,8 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
             </div>
           )}
           {queuedRow}
+          {reconnected && <ReconnectedRow at={reconnected.at} onDismiss={() => setHiddenReconnect(reconnected.at)} />}
+          {session.limit && <LimitRow text={session.limit} />}
           {working && agent && <WorkingRow agent={agent} messages={messages} duration={duration} />}
           {session.prompt && <Prompt prompt={session.prompt} onKey={(key) => void pressKey(key)} onAnswer={(key, text) => void answer(key, text)} />}
         </div>

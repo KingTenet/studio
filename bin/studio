@@ -7,7 +7,7 @@
 #   claude   Claude working on the app, in auto mode with claude/settings.json (its hooks and allowlist) and
 #            this folder as a plugin (its skills/), continuing the app's last conversation if it has one
 #   studio   the cockpit's server (scripts/lib/studio-server.js)
-#   app      the app's dev server (npm run dev, on the app's port, 4001)
+#   app      the app's dev server (npm run dev, on the app's port, 4001), its output also in data/logs/dev.log
 #   whisper  whisper-server, which turns the cockpit's dictation into text (on 127.0.0.1:8178)
 #   reaper   keeps Claude running: when it has died, starts it again in the claude tab with --continue (claude-reaper.sh keep),
 #            and the chat says "Reconnected"
@@ -67,7 +67,8 @@ tab_command() {
   case "$1" in
     claude) echo "$CLAUDE" ;;
     studio) echo "node $(q "$STUDIO_DIR/scripts/lib/studio-server.js")" ;;
-    app) echo "[ -d node_modules ] || npm install; PORT=$APP_PORT npm run dev" ;;
+    # Its output also goes to data/logs/dev.log, which the App tab shows and sends Claude when the app breaks (logs/ is never snapshotted).
+    app) echo "[ -d node_modules ] || npm install; mkdir -p data/logs; PORT=$APP_PORT npm run dev 2>&1 | tee data/logs/dev.log" ;;
     whisper)
       if ! command -v whisper-server >/dev/null; then echo "echo 'Dictation is off: whisper-server is not installed (brew install whisper-cpp).'"
       elif [ ! -f "$WHISPER_MODEL" ]; then echo "echo $(q "Dictation is off: there is no Whisper model at $WHISPER_MODEL.")"

@@ -1,4 +1,4 @@
-import { ChevronsRight, GitCommitVertical, History, Layers } from 'lucide-react'
+import { ChevronsRight, CloudOff, GitCommitVertical, History, Layers } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useTip } from '@/components/controls/Tip'
 import { Button } from '@/components/ui/button'
@@ -56,6 +56,14 @@ export const Rail = ({ w, pane }: RailProps) => {
       <header className="flex items-center gap-1.5">
         {overlay ? <CloseButton onClose={close} name="feature and versions" shortcut={shortcut} /> : <PinButton pinned={pinned} onToggle={togglePin} name="feature and versions" shortcut={shortcut} />}
         <h2 className="min-w-0 truncate text-sm font-medium">{w?.name ?? 'Your app'}</h2>
+        {Boolean(w?.unpushed.length) && (
+          <span
+            className="flex shrink-0 items-center gap-1 rounded-full border border-amber-600/40 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-800 dark:text-amber-300"
+            title={tip("The latest changes haven't reached the online backup yet (maybe there's no internet). The studio keeps trying; your work carries on as normal.")}
+          >
+            <CloudOff className="size-3" /> not backed up
+          </span>
+        )}
         <Button
           size="icon-xs"
           variant="ghost"

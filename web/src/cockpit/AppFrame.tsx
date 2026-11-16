@@ -4,6 +4,7 @@ import { useTip } from '@/components/controls/Tip'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { ignoredPageError, type AppError } from '@/lib/appError'
 import { store } from '@/lib/store'
 
 const VIEWPORTS = [
@@ -24,6 +25,10 @@ type AppFrameProps = {
   appUrl: string
   /** Whether the app is running; the frame loads once it is. */
   running: boolean
+  /** Whether its server has crashed (it isn't running, and its log ends with an error). */
+  crashed?: boolean
+  /** What to show when the app breaks: its server crashed, or the page reported an error (with a way to hide that one). */
+  renderError?: (error: AppError, dismiss?: () => void) => ReactNode
   /** The App | Artifacts switch, shown at the start of the toolbar. */
   switcher?: ReactNode
   /** Shown under the toolbar, e.g. while an old version is previewed. */
@@ -45,8 +50,12 @@ const framePath = (frame: HTMLIFrameElement | null) => {
   }
 }
 
-/** The app in a frame at a chosen viewport, scaled to fit the column or to a fixed zoom. */
-export const AppFrame = ({ label, appUrl, running, switcher, banner }: AppFrameProps) => {
+/**
+ * The app in a frame at a chosen viewport, scaled to fit the column or to a fixed zoom. When the app breaks it says so: a crashed
+ * server in place of the frame, and an error the page reports (the template's web/main.tsx posts `studio-error`, and `studio-ok`
+ * or a new `studio-location` once it works again) above it.
+ */
+export const AppFrame = ({ label, appUrl, running, crashed = false, renderError, switcher, banner }: AppFrameProps) => {
   const tip = useTip()
   const [viewport, setViewport] = useState(() => store.get('wt:' + label + ':viewport', '1440x900'))
   const [zoom, setZoom] = useState(() => {
@@ -54,6 +63,7 @@ export const AppFrame = ({ label, appUrl, running, switcher, banner }: AppFrameP
     return ZOOMS.includes(saved) ? saved : 'fit'
   })
   const [path, setPath] = useState<string | null>(null)
+  const [pageError, setPageError] = useState<string | null>(null)
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 })
   const stage = useRef<HTMLDivElement>(null)
   const frame = useRef<HTMLIFrameElement>(null)
@@ -78,7 +88,14 @@ export const AppFrame = ({ label, appUrl, running, switcher, banner }: AppFrameP
     }
     const timer = setInterval(() => show(framePath(frame.current)), 1000)
     const onMessage = (event: MessageEvent) => {
-      if (event.source === frame.current?.contentWindow && event.origin === new URL(appUrl).origin && event.data?.type === 'studio-location' && isAppPath(event.data.path)) show(event.data.path)
+      if (event.source !== frame.current?.contentWindow || event.origin !== new URL(appUrl).origin) return
+      const { type, path: at, message } = event.data ?? {}
+      if (type === 'studio-location' && isAppPath(at)) {
+        show(at)
+        setPageError(null)
+      }
+      if (type === 'studio-ok') setPageError(null)
+      if (type === 'studio-error' && typeof message === 'string' && !ignoredPageError(message)) setPageError(message)
     }
     window.addEventListener('message', onMessage)
     return () => {
@@ -134,7 +151,16 @@ export const AppFrame = ({ label, appUrl, running, switcher, banner }: AppFrameP
         <span className="min-w-16 flex-1 basis-0 truncate font-mono text-xs text-muted-foreground" title={tip(path ?? undefined)}>
           {path}
         </span>
-        <Button size="icon-sm" variant="ghost" aria-label="Reload the app" title={tip('Reload the app')} onClick={() => frame.current?.contentWindow?.location.reload()}>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          aria-label="Reload the app"
+          title={tip('Reload the app')}
+          onClick={() => {
+            setPageError(null)
+            frame.current?.contentWindow?.location.reload()
+          }}
+        >
           <RotateCw />
         </Button>
         <Button size="sm" variant="outline" title={tip('Open this page of the app in its own tab')} onClick={() => window.open(appUrl + (path ?? src ?? '/'), '_blank', 'noopener')}>
@@ -142,8 +168,11 @@ export const AppFrame = ({ label, appUrl, running, switcher, banner }: AppFrameP
         </Button>
       </div>
       <div>{banner}</div>
-      <div ref={stage} className="grid min-h-0 min-w-0 items-start justify-items-center-safe overflow-auto p-3">
-        {running ? (
+      <div ref={stage} className="relative grid min-h-0 min-w-0 items-start justify-items-center-safe overflow-auto p-3">
+        {running && pageError && renderError && <div className="absolute inset-x-3 top-3 z-10 grid justify-items-center">{renderError({ kind: 'page', message: pageError }, () => setPageError(null))}</div>}
+        {!running && crashed && renderError ? (
+          <div className="grid w-full justify-items-center self-center">{renderError({ kind: 'server' })}</div>
+        ) : running ? (
           <div className="relative overflow-hidden rounded-md shadow-lg ring-1 ring-border" style={{ width: width * scale, height: height * scale }}>
             <iframe ref={frame} title="App" src={appUrl + (src ?? '/')} className="absolute top-0 left-0 origin-top-left border-0 bg-white" style={{ width, height, transform: `scale(${scale})` }} />
           </div>

@@ -64,6 +64,10 @@ export type App = {
   url: string
   /** Whether its dev server is up. */
   running: boolean
+  /** Whether its dev server has crashed: it isn't up, and its log (data/logs/dev.log) ends with an error. */
+  crashed: boolean
+  /** When the reaper started the chat's Claude again after it died, for 10 minutes after; else null. */
+  reconnected: { at: string; paneId: string } | null
   /** Whether a job is running for it on the server. */
   busy: boolean
   tabs: Record<string, ButtonTab>
@@ -73,6 +77,8 @@ export type App = {
   feature: Feature | null
   /** Branches whose last push failed, tried again with the next commit. */
   unpushed: string[]
+  /** Why the last checkpoint wasn't saved: its changes held values from .env (`leaks` names the files and keys, never the values). */
+  refused: { at: string; leaks: string } | null
   /** What going back to a checkpoint dropped, while it can still be brought back; else null. */
   wentBack: WentBack | null
   /** The versions kept so far, oldest first. */
@@ -120,6 +126,8 @@ export type SessionView = {
   messages: SessionMessage[]
   input: string
   prompt: SessionPrompt | null
+  /** Claude Code's own line saying a usage limit was hit (`You've hit your session limit · resets 3:45pm`), while it shows. */
+  limit: string | null
   screen?: string
 }
 

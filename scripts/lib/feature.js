@@ -26,6 +26,8 @@
  *                     branch and files (tree, uncommitted ones too) to go back to; data/ as it was is in snapshots/preview/
  *   versions.json     { <tag>: { sessions: [session id] } }: the Claude sessions each kept version was built in, oldest first
  *   mode.json         { mode, at }: the chat's Ask / Plan / Build switch (Build when absent)
+ *   refused.json      { at, leaks }: the last checkpoint wasn't saved because the changes held values from .env (leaks names the
+ *                     files and keys, never the values), until the next checkpoint is saved or the feature closes
  *   turns/<session>.json  the mode the session's last turn runs in, as the switch was when her message was sent: { mode, at, start },
  *                     start (Ask and Plan only) being where the app was then ({ branch, head, tree }), for the Stop hook to put back
  *
@@ -90,7 +92,7 @@ const configuredApp = () => path.resolve(readJson(path.join(studioHome(), 'confi
 const stateDir = (appDir) => path.join(studioHome(), 'features', path.resolve(appDir).replace(/[^A-Za-z0-9]/g, '-'));
 const files = (appDir) => {
   const dir = stateDir(appDir);
-  return { dir, feature: path.join(dir, 'feature.json'), turn: path.join(dir, 'turn.json'), push: path.join(dir, 'push.json'), snapshots: path.join(dir, 'snapshots'), gate: path.join(dir, 'gate.json'), digest: path.join(dir, 'summary-digest.md'), wentBack: path.join(dir, 'went-back.json'), preview: path.join(dir, 'preview.json'), versions: path.join(dir, 'versions.json'), mode: path.join(dir, 'mode.json'), turns: path.join(dir, 'turns') };
+  return { dir, feature: path.join(dir, 'feature.json'), turn: path.join(dir, 'turn.json'), push: path.join(dir, 'push.json'), snapshots: path.join(dir, 'snapshots'), gate: path.join(dir, 'gate.json'), digest: path.join(dir, 'summary-digest.md'), wentBack: path.join(dir, 'went-back.json'), preview: path.join(dir, 'preview.json'), versions: path.join(dir, 'versions.json'), mode: path.join(dir, 'mode.json'), turns: path.join(dir, 'turns'), refused: path.join(dir, 'refused.json') };
 };
 
 const git = (appDir, ...args) => execFileSync('git', ['-C', appDir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }).trim();
@@ -139,10 +141,12 @@ const previewView = (preview) => (preview ? { tag: preview.tag, name: preview.na
 
 /**
  * The open feature ({ name, startedAt, base, checkpoints, sessions }) or null, the branches whose push failed, what going back
- * to a checkpoint left to bring back (wentBackView) or null, and the version being previewed (previewView) or null.
+ * to a checkpoint left to bring back (wentBackView) or null, the version being previewed (previewView) or null, and why the last
+ * checkpoint wasn't saved ({ at, leaks }) or null.
  */
 const read = (appDir) => ({
   feature: readJson(files(appDir).feature, null),
+  refused: readJson(files(appDir).refused, null),
   unpushed: Object.keys(readJson(files(appDir).push, {}).pending ?? {}),
   wentBack: wentBackView(readJson(files(appDir).wentBack, null)),
   preview: previewView(readJson(files(appDir).preview, null)),
@@ -313,8 +317,10 @@ const checkpoint = (appDir, { label, prompt = '', session = '' }, now = new Date
     const leaks = envLeaks(appDir, ['--cached']);
     if (leaks.length) {
       git(appDir, 'reset', '-q');
+      writeJson(files(appDir).refused, { at: now.toISOString(), leaks: describeLeaks(leaks) });
       return { refused: leakMessage(leaks) };
     }
+    fs.rmSync(files(appDir).refused, { force: true });
     git(appDir, 'commit', '-q', '-m', label);
     const sha = git(appDir, 'rev-parse', 'HEAD');
     snapshotData(appDir, sha);
@@ -537,10 +543,10 @@ const summarise = async (appDir, { command = process.env.STUDIO_SUMMARY_CMD || p
   return text ? { text, fallback: false } : { text: fallbackSummary(feature), fallback: true };
 };
 
-/** Closes the feature: its state, snapshots, test run, digest and what going back left to bring back go. */
+/** Closes the feature: its state, snapshots, test run, digest, what going back left to bring back and a refused checkpoint go. */
 const close = (appDir) => {
-  const { feature, snapshots, gate, digest, wentBack } = files(appDir);
-  for (const file of [feature, snapshots, gate, digest, wentBack]) fs.rmSync(file, { recursive: true, force: true });
+  const { feature, snapshots, gate, digest, wentBack, refused } = files(appDir);
+  for (const file of [feature, snapshots, gate, digest, wentBack, refused]) fs.rmSync(file, { recursive: true, force: true });
 };
 
 /**

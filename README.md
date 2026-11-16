@@ -20,7 +20,9 @@ The app lives in its own repo, next to this one (`~/Studio/<app>`). Studio keeps
 studio up
 ```
 
-This updates Studio, starts its herdr workspace (Claude, the cockpit's server, the app's dev server, whisper-server for dictation and the reaper, one tab each) and opens the cockpit. The reaper (`claude-reaper.sh keep`) starts Claude again with `--continue` when it has died, and the chat then says "Reconnected". Running it again reuses the workspace that's already running. `studio up --dry-run` prints what each tab would run.
+This updates Studio, starts its herdr workspace (Claude, the cockpit's server, the app's dev server, whisper-server for dictation and the reaper, one tab each) and opens the cockpit. The reaper (`claude-reaper.sh keep`) starts Claude again with `--continue` when it has died, and the chat then says "Reconnected". The app's dev server output also goes to the app's `data/logs/dev.log`.
+
+When something breaks, the cockpit says so: a crashed server or a page that throws shows in the App tab with **Ask Claude to fix this** (it sends the error and the last 50 lines of `dev.log` in Build mode, starting a feature for the fix when none is open; not while an old version is previewed); "not backed up" sits by the app's name while a push is waiting to be retried (the server retries every minute); Claude Code's own usage-limit line (`You've hit your … limit · resets …`) shows in the chat; a checkpoint refused for holding a value from `.env` shows in the Feature panel; and Keep, Discard, Go back, Bring them back, Preview and Restore wait while Claude works or waits on a question. Running it again reuses the workspace that's already running. `studio up --dry-run` prints what each tab would run.
 
 ## Layout
 

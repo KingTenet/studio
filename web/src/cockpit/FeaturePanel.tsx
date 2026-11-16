@@ -1,4 +1,4 @@
-import { Check, LoaderCircle, Play, RotateCcw, Trash2, Undo2, Wrench } from 'lucide-react'
+import { Check, KeyRound, LoaderCircle, Play, RotateCcw, Trash2, Undo2, Wrench } from 'lucide-react'
 import { useState } from 'react'
 import { useControls } from '@/components/controls/ControlsProvider'
 import { useTip } from '@/components/controls/Tip'
@@ -264,6 +264,16 @@ export const FeaturePanel = ({ w }: { w: App | null }) => {
         </span>
         <span className="ml-auto shrink-0 text-xs text-muted-foreground">{plural(feature.checkpoints.length, 'checkpoint')}</span>
       </div>
+      {w.refused && (
+        <div className="grid gap-1 rounded-lg border border-amber-600/40 bg-amber-500/10 p-2 text-sm" role="status">
+          <span className="flex items-center gap-1.5 font-medium">
+            <KeyRound className="size-3.5 shrink-0" /> The last change wasn't saved as a checkpoint
+          </span>
+          <span className="text-xs [overflow-wrap:anywhere]">
+            It contains a secret from the app's .env file ({w.refused.leaks}), and secrets never go into the app's history. Claude was asked to move it into .env; if it hasn't, ask it to.
+          </span>
+        </div>
+      )}
       {feature.checkpoints.length === 0 ? (
         <p className="text-sm text-muted-foreground">Ask Claude for the first change. Each change it makes is saved here as a checkpoint.</p>
       ) : (

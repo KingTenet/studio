@@ -8,7 +8,7 @@ const { mkdtempSync, rmSync, writeFileSync } = fs;
 const os = require('node:os');
 const path = require('node:path');
 
-const { appAgents, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, freeTextKeys, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats } = require('./studio-server');
+const { appAgents, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, freeTextKeys, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats } = require('./studio-server');
 
 test('isLocalHost: localhost and 127.0.0.1 only, so a rebound DNS name is refused', () => {
   assert.ok(isLocalHost('localhost'));
@@ -426,5 +426,28 @@ test("transcribe: when Whisper isn't running, the chat is told so in plain words
     });
   } finally {
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("devLogTail: the last 50 lines of the app's data/logs/dev.log, without colours or redrawn progress; looksCrashed spots a crash in it", () => {
+  const app = mkdtempSync(path.join(os.tmpdir(), 'studio-devlog-'));
+  try {
+    assert.equal(devLogTail(app), '');
+    fs.mkdirSync(path.join(app, 'data', 'logs'), { recursive: true });
+    const lines = Array.from({ length: 60 }, (_, i) => `line ${i}`);
+    const crash = ['\x1b[31m/app/server/app.ts:12', "    throw new Error('boom')", 'Error: boom', '    at createApp (/app/server/app.ts:12:11)', '', 'Node.js v24.21.0'];
+    writeFileSync(path.join(app, 'data', 'logs', 'dev.log'), [...lines, 'building 1/3\rbuilding 3/3', ...crash, ''].join('\n') + '\n');
+    const tail = devLogTail(app).split('\n');
+    assert.equal(tail.length, 50);
+    assert.equal(tail.at(-1), 'Node.js v24.21.0');
+    assert.equal(tail.at(-6), '/app/server/app.ts:12');
+    assert.equal(tail.at(-7), 'building 3/3');
+    assert.equal(tail[0], 'line 17');
+    assert.ok(looksCrashed(devLogTail(app)));
+    assert.ok(!looksCrashed('App running at http://localhost:4001'));
+    assert.ok(looksCrashed('Error: listen EADDRINUSE: address already in use :::4001'));
+    assert.ok(looksCrashed("SyntaxError: Unexpected token '}'"));
+  } finally {
+    rmSync(app, { recursive: true, force: true });
   }
 });

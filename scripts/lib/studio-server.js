@@ -5,6 +5,7 @@
  * for one app (config.appDir) and the Claude session working on it in a herdr pane.
  *
  * The API: /_env/api/state (the app, its Claude pane, the feature being built, its versions, the chat's mode and the shared prefs),
+ * the end of the app's dev server log (app/log),
  * the chat's Ask / Plan / Build switch (mode),
  * the feature (feature/start, feature/check, feature/keep, feature/discard, feature/go-back, feature/bring-back),
  * the versions (version/preview, version/end-preview, version/restore),
@@ -23,14 +24,14 @@
  */
 
 const { execFile, execFileSync, spawn } = require('node:child_process');
-const { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } = require('node:fs');
+const { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 
-const { COMMAND_SHELL_MARKER, pausedSessions, processTree, readClosed, runningCommands, withRealSessions } = require('./claude-reaper');
+const { COMMAND_SHELL_MARKER, pausedSessions, processTree, readClosed, readReconnected, runningCommands, withRealSessions } = require('./claude-reaper');
 const { describe: describeArtifacts, folderFor: artifactFolder, locate: locateArtifact, remove: removeArtifacts, removeNote: removeArtifactNote } = require('./artifacts');
-const { paneInput, panePrompt, readTranscript, sessionTitle, transcriptPath } = require('./session-view');
+const { paneInput, panePrompt, readTranscript, sessionTitle, stripAnsi, transcriptPath, usageLimit } = require('./session-view');
 const { EFFORT, bringBack, discard: discardFeature, endPreview, goBack, keep: keepFeature, nextVersion, preview, pushInBackground, read: readFeature, readMode, restore, runGate, setMode, start: startFeature, summarise, versions } = require('./feature');
 
 const SCRIPTS = path.resolve(__dirname, '..');
@@ -618,7 +619,7 @@ const paneScreen = (paneId) => execFileSync('herdr', ['pane', 'read', paneId, '-
 /**
  * What the cockpit's chat column shows for a pane: the transcript's messages from byte `after` on
  * (the whole tail when `after` is undefined), text typed into the pane but not sent, the prompt a
- * blocked session waits on, and the raw screen for the Terminal view.
+ * blocked session waits on, Claude Code's line saying a usage limit was hit, and the raw screen for the Terminal view.
  */
 const sessionView = (pane, after, withScreen) => {
   const sessionId = pane.agent_session?.value ?? null;
@@ -626,7 +627,7 @@ const sessionView = (pane, after, withScreen) => {
   const transcript = file ? readTranscript(file, after) : { offset: 0, reset: true, messages: [] };
   const screen = paneScreen(pane.pane_id);
   const status = AGENT_STATUSES.includes(pane.agent_status) ? pane.agent_status : 'unknown';
-  return { sessionId, status, ...transcript, input: paneInput(screen), prompt: status === 'blocked' ? panePrompt(screen) : null, ...(withScreen ? { screen } : {}) };
+  return { sessionId, status, ...transcript, input: paneInput(screen), prompt: status === 'blocked' ? panePrompt(screen) : null, limit: usageLimit(screen), ...(withScreen ? { screen } : {}) };
 };
 
 const sendJson = (res, status, body) => {
@@ -1041,6 +1042,47 @@ const appRunning = (url) => {
   }
 };
 
+const DEV_LOG_LINES = 50;
+const MAX_LOG_LINE = 300;
+// What a crash leaves in the log: an error's name or stack, npm's ERR!, or the Node.js version line Node prints under an uncaught one.
+const CRASH = /\b\w*Error\b|\bException\b|npm ERR!|^Node\.js v\d/m;
+
+/** The last lines of the app's dev server output (data/logs/dev.log, which `studio up` writes), without colours; '' when there is none. */
+const devLogTail = (appDir, lines = DEV_LOG_LINES) => {
+  let text;
+  try {
+    const file = path.join(appDir, 'data', 'logs', 'dev.log');
+    const { size } = statSync(file);
+    // The end of the file is enough for 50 lines.
+    const buffer = Buffer.alloc(Math.min(size, 256 * 1024));
+    const fd = openSync(file, 'r');
+    try {
+      readSync(fd, buffer, 0, buffer.length, size - buffer.length);
+    } finally {
+      closeSync(fd);
+    }
+    text = buffer.toString('utf8');
+  } catch {
+    return '';
+  }
+  // A line redrawn in place (a progress counter) keeps only what was drawn last.
+  return stripAnsi(text)
+    .trimEnd()
+    .split('\n')
+    .map((line) => line.replace(/^.*\r(?=.)/, '').replace(/\r$/, '').slice(0, MAX_LOG_LINE))
+    .slice(-lines)
+    .join('\n');
+};
+
+// How long the chat says "Reconnected" after the reaper started Claude again.
+const RECONNECTED_SHOWN_MS = 10 * 60_000;
+
+/** When the reaper last started the chat's Claude again ({ at, paneId }), if that was in the last 10 minutes; else null. */
+const recentReconnect = (reconnected, now = Date.now()) => (reconnected && now - Date.parse(reconnected.at) < RECONNECTED_SHOWN_MS ? reconnected : null);
+
+/** Whether the end of the dev server's log shows a crash; with the app not listening, it has crashed rather than not started yet. */
+const looksCrashed = (tail) => CRASH.test(tail);
+
 /** The Claude panes working in the app's folder, most urgent first. */
 const appAgents = (snapshot, appDir, commands = new Map()) => {
   const tabLabels = new Map(snapshot.tabs.map((tab) => [tab.tab_id, tab.label]));
@@ -1077,10 +1119,13 @@ const state = () => {
   const runningSessions = new Set(snapshot.panes.map((pane) => pane.agent_session?.value).filter(Boolean));
   const livePanes = new Set(snapshot.panes.map((pane) => pane.pane_id));
   const artifacts = artifactsTab(snapshot, app.dir);
+  const running = appRunning(app.url);
   return {
     app: {
       ...app,
-      running: appRunning(app.url),
+      running,
+      crashed: !running && looksCrashed(devLogTail(app.dir)),
+      reconnected: recentReconnect(readReconnected()),
       busy: jobs.has(LABEL),
       tabs: artifacts ? { artifacts } : {},
       agents: appAgents(snapshot, app.dir, agentCommands(snapshot)).map((agent) => ({ ...agent, title: sessionTitle(agent.sessionId), active: lastActive(agent.sessionId) })),
@@ -1189,6 +1234,7 @@ const syncEffort = (appDir) => {
   }
 };
 const EFFORT_SYNC_MS = 3000;
+const PUSH_RETRY_MS = 60_000;
 
 /**
  * Sets the chat's switch ({ mode }: ask, plan or build) and the effort for it. Allowed while Claude works: the turn under way
@@ -1390,6 +1436,10 @@ const handle = async (req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/_env/api/state') {
     sendJson(res, 200, currentState());
+    return;
+  }
+  if (req.method === 'GET' && url.pathname === '/_env/api/app/log') {
+    sendJson(res, 200, { tail: devLogTail(appInfo().dir) });
     return;
   }
   if (req.method === 'GET' && url.pathname === '/_env/api/artifacts') {
@@ -1654,6 +1704,11 @@ if (require.main === module) {
     .listen(CONTROL_PORT, '127.0.0.1', () => process.stderr.write(`studio server on http://localhost:${CONTROL_PORT}\n`));
   // A new session (or one /clear-ed) gets the effort for the mode once it is idle, and so does a mode changed while Claude worked.
   setInterval(() => syncEffort(appInfo().dir), EFFORT_SYNC_MS);
+  // A push that failed (offline, say) is tried again every minute too, so "not backed up" goes once it can.
+  setInterval(() => {
+    const appDir = appInfo().dir;
+    if (readFeature(appDir).unpushed.length) pushInBackground(appDir);
+  }, PUSH_RETRY_MS);
 }
 
-module.exports = { appAgents, appInfo, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, freeTextKeys, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, shellQuote, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats };
+module.exports = { appAgents, appInfo, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, freeTextKeys, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, shellQuote, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats };

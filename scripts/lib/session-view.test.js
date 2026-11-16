@@ -6,7 +6,7 @@ const { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } = requir
 const os = require('node:os');
 const path = require('node:path');
 
-const { paneInput, panePrompt, readTranscript, recordMessages, sessionTitle, stripAnsi, transcriptPath, unstyledText } = require('./session-view');
+const { paneInput, panePrompt, readTranscript, recordMessages, sessionTitle, stripAnsi, transcriptPath, unstyledText, usageLimit } = require('./session-view');
 
 const RULE = '\x1b[0m\x1b[38;2;138;138;138m' + '─'.repeat(40) + '\x1b[0m\r';
 const STATUS = '  \x1b[0m\x1b[1m\x1b[38;5;6mdelivery\x1b[0m\x1b[38;2;102;102;102m · \x1b[0m';
@@ -292,4 +292,12 @@ test('sessionTitle: the latest /rename title over the generated one, read increm
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("usageLimit: Claude Code's limit line from the screen, until Claude replies again below it", () => {
+  const limit = ['⏺ Adding the delete button now.', '', '  ⎿  \x1b[31mYou\'ve hit your session limit · resets 3:45pm\x1b[0m', '     /upgrade to increase your usage limit.', '', RULE, '❯ ', RULE, STATUS];
+  assert.equal(usageLimit(limit.join('\n')), "You've hit your session limit · resets 3:45pm");
+  assert.equal(usageLimit(['│ You’ve hit your weekly limit · resets Nov 20, 9am (Europe/London)   │'].join('\n')), 'You’ve hit your weekly limit · resets Nov 20, 9am (Europe/London)');
+  assert.equal(usageLimit([...limit.slice(0, 4), '> carry on', '⏺ Done: the button is there.', RULE, '❯ ', RULE].join('\n')), null);
+  assert.equal(usageLimit(['⏺ All done.', RULE, '❯ ', RULE, STATUS].join('\n')), null);
 });

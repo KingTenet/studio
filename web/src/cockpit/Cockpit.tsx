@@ -9,6 +9,7 @@ import { blockedTitle } from '@/lib/controls'
 import { afterBuild, chatAgentOf, onPublish, watchTurn, type TurnWatch } from '@/lib/plan'
 import { store } from '@/lib/store'
 import type { ArtifactInfo } from '@/lib/types'
+import { AppBroken } from './AppBroken'
 import { AppFrame } from './AppFrame'
 import { ArtifactsPane, type ArtifactDrawingHandle } from './ArtifactsPane'
 import { Chat } from './Chat'
@@ -201,7 +202,15 @@ const Layout = ({ selected, setSelected, adopt, focusMessage }: LayoutProps) => 
           <div className="relative h-full">
             {/* All stay mounted so switching to the artifacts and back doesn't reload the app, or lose the drawing. */}
             <div className={source === 'app' ? 'h-full' : 'hidden'}>
-              <AppFrame label={LABEL} appUrl={w?.url ?? 'http://localhost:4001'} running={Boolean(w?.running)} switcher={switcher} banner={w && <PreviewBanner w={w} />} />
+              <AppFrame
+                label={LABEL}
+                appUrl={w?.url ?? 'http://localhost:4001'}
+                running={Boolean(w?.running)}
+                crashed={Boolean(w?.crashed)}
+                renderError={(error, dismiss) => w && <AppBroken error={error} w={w} onSend={sendForHer} onDismiss={dismiss} />}
+                switcher={switcher}
+                banner={w && <PreviewBanner w={w} />}
+              />
             </div>
             <div className={source === 'artifacts' ? 'h-full' : 'hidden'}>
               <ArtifactsPane label={LABEL} switcher={switcher} previewId={previewId} onPreview={(id) => (id ? previewArtifact(id) : setPreviewId(null))} onPublished={onPublished} onBuildPlan={sendForHer} onShowing={onShowing} onPick={onPick} onEscape={clearPicks} drawingRef={artifactDrawing} drawingAttached={artifactInk.attached} onDrawingChange={artifactInk.onChange} />
