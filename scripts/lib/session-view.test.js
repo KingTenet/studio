@@ -24,6 +24,7 @@ test('recordMessages: a message queued while Claude works, and what became of it
 test('recordMessages: typed text, slash commands and interruptions; harness text and sidechains dropped', () => {
   assert.deepEqual(recordMessages({ type: 'user', message: { content: 'fix the target line' } }), [{ kind: 'you', text: 'fix the target line' }]);
   assert.deepEqual(recordMessages({ type: 'user', message: { content: '<command-name>/ship-it</command-name>\n<command-args>ABC-1</command-args>' } }), [{ kind: 'you', text: '/ship-it ABC-1' }]);
+  assert.deepEqual(recordMessages({ type: 'user', message: { content: '<command-name>/effort</command-name>\n<command-args>medium</command-args>' } }), [], "the studio's own /effort isn't a message");
   assert.deepEqual(recordMessages({ type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] } }), [{ kind: 'note', text: 'Interrupted' }]);
   assert.deepEqual(recordMessages({ type: 'user', message: { content: '\n\n<pasted_content id="e38f">\nevent,count()\n$pageview,99\n</pasted_content id="e38f">\n' } }), [{ kind: 'you', text: '\n\n\nevent,count()\n$pageview,99\n\n' }]);
   assert.deepEqual(recordMessages({ type: 'user', message: { content: 'see this:\n<pasted_content id="a1">\nlog\n</pasted_content id="a1">' } }), [{ kind: 'you', text: 'see this:\n\nlog\n' }]);

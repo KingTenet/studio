@@ -432,12 +432,50 @@ const chatCommand = (appDir) => {
   return claudeCommand() + (hasConversation ? ' --continue' : '');
 };
 
+const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+};
+
+/**
+ * A Claude in the chat's pane that wasn't started the studio's way: herdr, restoring panes after a restart, runs a plain
+ * `claude --resume <id>`, without the studio's settings and plugin. That Claude has none of the studio's hooks (no
+ * checkpoints, no Ask/Plan guard, and a chat that loses track of it at /clear). Once it is idle it is stopped and started
+ * again with claudeCommand(), resuming the same session, and the chat shows "Reconnected". Returns whether it did.
+ */
+const restartWithStudio = (pane, processInfo, now, panesDir = PANES_DIR) => {
+  const claude = claudeProcess(processInfo);
+  if (!claude || process.env.STUDIO_CLAUDE_CMD || (claude.argv ?? []).includes('--plugin-dir') || !['idle', 'done'].includes(pane.agent_status)) return false;
+  const argv = claude.argv ?? [];
+  const sessionId = pane.agent_session?.value ?? (argv.includes('--resume') ? argv[argv.indexOf('--resume') + 1] : null);
+  run('herdr', ['pane', 'send-keys', pane.pane_id, 'C-c']);
+  sleepSync(500);
+  run('herdr', ['pane', 'send-keys', pane.pane_id, 'C-c']);
+  for (let i = 0; i < 40 && alive(claude.pid); i += 1) sleepSync(250);
+  if (alive(claude.pid)) {
+    console.error(`${new Date(now).toISOString()} claude (pid ${claude.pid}) in ${pane.pane_id} runs without the studio's settings, and didn't stop to be started again with them`);
+    return false;
+  }
+  const resume = sessionId && hasTranscript(sessionId);
+  notePaneSession(pane.pane_id, resume ? sessionId : null, panesDir);
+  run('herdr', ['pane', 'run', pane.pane_id, `${claudeCommand()}${resume ? ` --resume ${sessionId}` : ''}`]);
+  fs.mkdirSync(reaperDir(), { recursive: true });
+  fs.writeFileSync(reconnectedPath(), JSON.stringify({ at: new Date(now).toISOString(), paneId: pane.pane_id }));
+  console.error(`${new Date(now).toISOString()} Claude in ${pane.pane_id} ran without the studio's settings, so it was started again with them`);
+  return true;
+};
+
 /**
  * One look at the studio's workspace (labelled `workspaceLabel`): when no Claude has run in it for KEEP_GRACE_MS, Claude is started
  * again with --continue in the claude tab's pane, or in a new claude tab if that was closed, marked as the chat's (STUDIO_ROLE=chat),
  * and the restart is noted for the chat to show "Reconnected". Returns the `since` to pass to the next look.
  */
-const keepOnce = (since, { workspaceLabel, appDir, now = Date.now() }) => {
+const keepOnce = (since, { workspaceLabel, appDir, now = Date.now(), panesDir = PANES_DIR }) => {
   const workspace = herdr('workspace', 'list').result.workspaces.find((candidate) => candidate.label === workspaceLabel);
   if (!workspace) return null;
   const panes = herdr('pane', 'list', '--workspace', workspace.workspace_id).result.panes;
@@ -446,6 +484,7 @@ const keepOnce = (since, { workspaceLabel, appDir, now = Date.now() }) => {
   const tabId = herdr('tab', 'list', '--workspace', workspace.workspace_id).result.tabs.find((candidate) => candidate.label === 'claude')?.tab_id;
   const pane = tabId && panes.find((candidate) => candidate.tab_id === tabId);
   const tab = pane ? { paneId: pane.pane_id, atPrompt: (({ foreground_process_group_id: group, shell_pid: shell }) => Boolean(shell) && group === shell)(info(pane)) } : null;
+  if (pane && restartWithStudio(pane, info(pane), now, panesDir)) return null;
   const next = keepAction({ since, now, claudeRunning, tab });
   if (next.action !== 'restart' && next.action !== 'create') return next.since;
   let paneId = tab?.paneId;

@@ -418,7 +418,7 @@ fi
 
 tab_id() { herdr tab list --workspace "$ws" | jq -r --arg label "$1" '.result.tabs[] | select(.label == $label) | .tab_id' | head -n1; }
 tab_pane() { herdr pane list --workspace "$ws" | jq -r --arg tab "$1" '[.result.panes[] | select(.tab_id == $tab)][0].pane_id'; }
-at_prompt() { herdr pane process-info --pane "$1" | jq -e '.result.process_info | .foreground_process_group_id == .shell_pid' >/dev/null; }
+at_prompt() { herdr pane process-info --pane "$1" 2>/dev/null | jq -e '.result.process_info | .foreground_process_group_id == .shell_pid' >/dev/null; }
 # Connects rather than asking lsof, which only sees this user's processes: another user on this Mac (with their own
 # studio) holds the same localhost ports, and the studio would otherwise start nothing and open their cockpit.
 port_busy() { nc -z -G 1 127.0.0.1 "$1" >/dev/null 2>&1 || nc -z -G 1 ::1 "$1" >/dev/null 2>&1; }

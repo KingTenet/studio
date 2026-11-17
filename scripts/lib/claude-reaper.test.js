@@ -288,6 +288,23 @@ else fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + '\\n');
     assert.ok(create.join(' ').includes('--env STUDIO_ROLE=chat'), create.join(' '));
     assert.deepEqual(start, ['pane', 'run', 'w1:p9', command]);
     assert.equal(readReconnected().paneId, 'w1:p9');
+
+    // herdr brought Claude back after a restart with a plain `claude --resume`: once idle, it's started again the studio's way.
+    fs.rmSync(calls);
+    const panesDir = path.join(root, 'panes');
+    const restored = { shell_pid: 10, foreground_process_group_id: 12, foreground_processes: [{ pid: 999_999_9, argv0: 'claude', argv: ['claude', '--resume', 's1'] }] };
+    const restoredPane = { ...panes[0], agent_status: 'idle', agent_session: { value: 's1' } };
+    write({ tabs, panes: [{ ...restoredPane, agent_status: 'working' }, panes[1]], info: { 'w1:p1': restored, 'w1:p2': dev } });
+    keepOnce(null, { ...opts(60_000), panesDir });
+    assert.deepEqual(logged(), [], 'not while it works');
+    write({ tabs, panes: [restoredPane, panes[1]], info: { 'w1:p1': { ...restored, foreground_processes: [{ pid: 11, argv0: 'claude', argv: claudeCommand().split(' ') }] }, 'w1:p2': dev } });
+    keepOnce(null, { ...opts(61_000), panesDir });
+    assert.deepEqual(logged(), [], 'started the studio way already');
+    write({ tabs, panes: [restoredPane, panes[1]], info: { 'w1:p1': restored, 'w1:p2': dev } });
+    assert.equal(keepOnce(null, { ...opts(62_000), panesDir }), null);
+    assert.deepEqual(logged(), [['pane', 'send-keys', 'w1:p1', 'C-c'], ['pane', 'send-keys', 'w1:p1', 'C-c'], ['pane', 'run', 'w1:p1', `${claudeCommand()} --resume s1`]]);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(panesDir, 'w1_p1.json'), 'utf8')).session_id, 's1', 'the chat follows the resumed session');
+    assert.deepEqual(readReconnected(), { at: new Date(62_000).toISOString(), paneId: 'w1:p1' });
   } finally {
     for (const [name, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[name];

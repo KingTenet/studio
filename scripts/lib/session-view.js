@@ -59,6 +59,8 @@ const PASTE_TAG = /<\/?pasted_content id="[^"]*">/g;
 const typedText = (text) => {
   const command = COMMAND_NAME.exec(text);
   if (command) {
+    // The studio types /effort itself when the mode changes (syncEffort): not something to show as a message.
+    if (command[1] === '/effort') return null;
     return `${command[1]} ${COMMAND_ARGS.exec(text)?.[1] ?? ''}`.trim();
   }
   if (text.trimStart().startsWith('<') && !text.trimStart().startsWith('<pasted_content ')) {
