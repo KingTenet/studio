@@ -732,11 +732,25 @@ const sameCode = (appDir, a, b) => {
 };
 
 /**
+ * The app's database migrations (the template's server/migrations.ts). The tables only ever move forward, because they hold her
+ * data: a version that is previewed or restored gets its own code but the latest version's migrations, so a migration added
+ * later is never skipped and old code runs on the newest tables (the template's rules keep migrations additive for that).
+ */
+const MIGRATIONS = 'server/migrations.ts';
+const latestMigrations = (appDir) => {
+  try {
+    return git(appDir, 'rev-parse', '--verify', '-q', `main:${MIGRATIONS}`);
+  } catch {
+    return null;
+  }
+};
+
+/**
  * Previews an old version: its code is checked out, detached (no branch moves), for the app's dev server to pick up. What
  * there was (the branch, the files, uncommitted ones too, and data/) is kept, so endPreview puts it back exactly; data/ is
- * the app's own meanwhile. Previewing another version on top keeps what there was before the first. Refused while a feature
- * is open. When the version needs other packages than are installed, packagesDiffer says so (they aren't installed). Returns
- * previewView.
+ * the app's own meanwhile, and so are the migrations (the latest version's, MIGRATIONS). Previewing another version on top
+ * keeps what there was before the first. Refused while a feature is open. When the version needs other packages than are
+ * installed, packagesDiffer says so (they aren't installed). Returns previewView.
  */
 const preview = (appDir, tag, now = new Date()) =>
   withLock(appDir, () => {
@@ -751,6 +765,8 @@ const preview = (appDir, tag, now = new Date()) =>
     git(appDir, 'reset', '-q', '--hard');
     git(appDir, 'clean', '-q', '-f', '-d');
     git(appDir, 'checkout', '-q', '--detach', version.sha);
+    // Its code, on the latest version's tables (left as a change, which leaving the preview puts back).
+    if (latestMigrations(appDir)) git(appDir, 'checkout', 'main', '--', MIGRATIONS);
     const previewing = { tag, name: version.name, sha: version.sha, branch: before.branch, head: before.head, tree: before.tree, at: now.toISOString(), packagesDiffer: packagesDiffer(appDir, before.head, version.sha) };
     writeJson(files(appDir).preview, previewing);
     return previewView(previewing);
@@ -777,8 +793,9 @@ const endPreview = (appDir) => withLock(appDir, () => leavePreview(appDir));
 
 /**
  * Restores an old version: a new commit on main whose files are that version's, but for FEATURES.md, which keeps every entry and
- * gains one for the restore ("## v(N+1) restore vM", saying what it brought back). main only fast-forwards to it, it is tagged
- * v(N+1) ("v(N+1) restore vM"), and develop is reset to it and checked out. No version is rewritten, and data/ stays as it is.
+ * gains one for the restore ("## v(N+1) restore vM", saying what it brought back), and the migrations, which stay the latest
+ * (MIGRATIONS). main only fast-forwards to it, it is tagged v(N+1) ("v(N+1) restore vM"), and develop is reset to it and
+ * checked out. No version is rewritten, and data/ stays as it is.
  * Refused while a feature is open, when there are changes that aren't in any version, or when the app's code is that version's
  * already. Ends a preview first. Returns { version, sha, restored }; push with pushInBackground(appDir, ['main']).
  */
@@ -798,7 +815,7 @@ const restore = (appDir, tag) =>
     } catch {
       features = '# Features\n';
     }
-    const entry = `${features.replace(/\n*$/, '\n')}\n## ${next} ${name}\n\nBrought back ${tag} ("${version.name}"): the app's code is as it was then, and its data as it is now.\n`;
+    const entry = `${features.replace(/\n*$/, '\n')}\n## ${next} ${name}\n\nBrought back ${tag} ("${version.name}"): the app's code is as it was then, and its data and tables as they are now.\n`;
     // The version's files, with FEATURES.md as it is now plus the entry, in a throwaway index so the real one is untouched.
     const index = path.join(os.tmpdir(), `studio-index-${crypto.randomUUID()}`);
     const env = { ...process.env, GIT_INDEX_FILE: index, GIT_TERMINAL_PROMPT: '0' };
@@ -807,6 +824,8 @@ const restore = (appDir, tag) =>
       execFileSync('git', ['-C', appDir, 'read-tree', version.sha], { stdio: 'ignore', env });
       const blob = execFileSync('git', ['-C', appDir, 'hash-object', '-w', '--stdin'], { input: entry, encoding: 'utf8', env }).trim();
       execFileSync('git', ['-C', appDir, 'update-index', '--add', '--cacheinfo', `100644,${blob},${featuresFile}`], { stdio: 'ignore', env });
+      const migrations = latestMigrations(appDir);
+      if (migrations) execFileSync('git', ['-C', appDir, 'update-index', '--add', '--cacheinfo', `100644,${migrations},${MIGRATIONS}`], { stdio: 'ignore', env });
       tree = execFileSync('git', ['-C', appDir, 'write-tree'], { encoding: 'utf8', env }).trim();
     } finally {
       fs.rmSync(index, { force: true });

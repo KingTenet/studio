@@ -785,7 +785,7 @@ test('Restore: a new commit on main with the old version’s code, tagged as the
     assert.equal(git(t.app, 'log', '-1', '--format=%s', 'main'), 'Restore v1');
     assert.equal(git(t.app, 'diff', '--stat', v1.sha, v3, '--', '.', ':(exclude)FEATURES.md'), '', "v1's code exactly");
     assert.deepEqual(entries(t.app), ['## v1 Getting Started', '## v2 dark mode', '## v3 restore v1']);
-    assert.match(git(t.app, 'show', 'main:FEATURES.md'), /## v3 restore v1\n\nBrought back v1 \("Getting Started"\): the app's code is as it was then, and its data as it is now\.$/);
+    assert.match(git(t.app, 'show', 'main:FEATURES.md'), /## v3 restore v1\n\nBrought back v1 \("Getting Started"\): the app's code is as it was then, and its data and tables as they are now\.$/);
     assert.deepEqual(tags, { v1: tagObject(t.app, 'v1'), v2: tagObject(t.app, 'v2') }, 'no tag rewritten');
     assert.deepEqual(versions(t.app).map(({ tag, name, sessions }) => [tag, name, sessions.length]), [['v1', 'Getting Started', 0], ['v2', 'dark mode', 1], ['v3', 'restore v1', 0]]);
     assert.equal(git(t.app, 'symbolic-ref', '--short', 'HEAD'), 'develop');
@@ -810,6 +810,46 @@ test('Restore: a new commit on main with the old version’s code, tagged as the
     assert.deepEqual(JSON.parse(pushed.stdout), { pushed: ['develop', 'main'], failed: [] }, pushed.stderr);
     for (const tag of ['v1', 'v2', 'v3', 'v4']) assert.equal(tagObject(t.origin, tag), tagObject(t.app, tag));
     assert.equal(remoteSha(t.origin, 'main'), git(t.app, 'rev-parse', 'main'));
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test('Preview and Restore keep the latest migrations: old code on the newest tables, so a migration added after a restore follows on and is never skipped', async () => {
+  const t = keepSetup();
+  try {
+    const migrations = path.join(t.app, 'server', 'migrations.ts');
+    const build = (name, list, extra = () => {}) => {
+      t.run(['start', name]);
+      t.turn(name, () => {
+        fs.mkdirSync(path.dirname(migrations), { recursive: true });
+        fs.writeFileSync(migrations, `export const migrations = ${JSON.stringify(list)}\n`);
+        extra();
+      }, `Checkpoint: ${name}`);
+      return keep(t.app, { summary: name, anyway: true }).version;
+    };
+    assert.equal(build('notes table', ['notes']), 'v2');
+    assert.equal(build('tags table', ['notes', 'tags'], () => fs.writeFileSync(path.join(t.app, 'tags.js'), 'tags\n')), 'v3');
+    const latest = fs.readFileSync(migrations, 'utf8');
+
+    preview(t.app, 'v2');
+    assert.ok(!fs.existsSync(path.join(t.app, 'tags.js')), "v2's code");
+    assert.equal(fs.readFileSync(migrations, 'utf8'), latest, "v3's migrations");
+    endPreview(t.app);
+    assert.equal(git(t.app, 'status', '--porcelain'), '', 'all put back');
+
+    assert.equal(restore(t.app, 'v2').version, 'v4');
+    assert.ok(!fs.existsSync(path.join(t.app, 'tags.js')), "v2's code");
+    assert.equal(git(t.app, 'show', 'v4:server/migrations.ts') + '\n', latest, "v3's migrations, committed");
+    assert.equal(git(t.app, 'status', '--porcelain'), '');
+
+    // The next feature's migration comes after both, where a database that has run v3's expects it.
+    assert.equal(build('dates', ['notes', 'tags', 'dates'], () => fs.writeFileSync(path.join(t.app, 'dates.js'), 'dates\n')), 'v5');
+
+    // A restore of a version from before the migrations file existed keeps it too.
+    assert.equal(restore(t.app, 'v1').version, 'v6');
+    assert.ok(!fs.existsSync(path.join(t.app, 'dates.js')), "v1's code");
+    assert.equal(git(t.app, 'show', 'v6:server/migrations.ts'), git(t.app, 'show', 'v5:server/migrations.ts'));
   } finally {
     await t.cleanup();
   }
