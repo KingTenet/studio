@@ -17,7 +17,7 @@ const path = require('node:path');
 const { bringBack, discard, endPreview, goBack, keep, lastReply, nameFromPrompt, preview, read, readMode, restore, restoreData, runGate, setMode, snapshotData, stateDir, summarise, turnLabel, versions } = require('./feature');
 
 const SCRIPT = path.join(__dirname, 'feature.js');
-const IDENTITY = { GIT_AUTHOR_NAME: 'Her', GIT_AUTHOR_EMAIL: 'her@example.com', GIT_COMMITTER_NAME: 'Her', GIT_COMMITTER_EMAIL: 'her@example.com' };
+const IDENTITY = { GIT_AUTHOR_NAME: 'Test User', GIT_AUTHOR_EMAIL: 'user@example.com', GIT_COMMITTER_NAME: 'Test User', GIT_COMMITTER_EMAIL: 'user@example.com' };
 
 const git = (dir, ...args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', env: { ...process.env, ...IDENTITY } }).trim();
 
@@ -47,7 +47,7 @@ const setup = () => {
   };
   const hook = (name, event) => run([name], JSON.stringify({ session_id: 's1', cwd: app, ...event }));
   const transcript = path.join(root, 'transcript.jsonl');
-  /** One turn: her prompt, the edits, Claude's reply in the transcript, then the Stop hook. */
+  /** One turn: the user's prompt, the edits, Claude's reply in the transcript, then the Stop hook. */
   const turn = (prompt, edit, reply) => {
     hook('prompt-submit', { prompt });
     edit();
@@ -226,6 +226,26 @@ test('a prompt with no feature open starts one named from it, and tells Claude',
     assert.equal(t.withEnv(() => read(t.app)).feature.name, "Add a list of my favourite");
     // With the feature open, the next prompt is only noted.
     assert.equal(t.hook('prompt-submit', { prompt: 'and their authors' }).stdout, '');
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test('a Plan prompt with no feature open starts one too, so the plan and its build share a conversation; an Ask prompt starts none', async () => {
+  const t = setup();
+  try {
+    t.withEnv(() => setMode(t.app, 'ask'));
+    const asked = t.hook('prompt-submit', { prompt: 'What does the app do now?' });
+    assert.equal(asked.status, 0, asked.stderr);
+    assert.match(asked.stdout, /Ask mode/);
+    assert.equal(t.withEnv(() => read(t.app)).feature, null);
+
+    t.withEnv(() => setMode(t.app, 'plan'));
+    const planned = t.hook('prompt-submit', { prompt: 'Add a reading list with due dates' });
+    assert.equal(planned.status, 0, planned.stderr);
+    assert.match(planned.stdout, /a new one was started for this work, called "Add a reading list with due"/);
+    assert.match(planned.stdout, /Plan mode/);
+    assert.equal(t.withEnv(() => read(t.app)).feature.name, 'Add a reading list with due');
   } finally {
     await t.cleanup();
   }
@@ -562,7 +582,7 @@ const allFiles = (dir, base = dir) =>
       })
   );
 
-test('Go back to here: develop and data/ back to the checkpoint; Bring them back restores everything exactly until her next message, which tells Claude once', async () => {
+test('Go back to here: develop and data/ back to the checkpoint; Bring them back restores everything exactly until the next message, which tells Claude once', async () => {
   const t = keepSetup();
   try {
     const write = (file, text) => fs.writeFileSync(path.join(t.app, file), text);
@@ -592,7 +612,7 @@ test('Go back to here: develop and data/ back to the checkpoint; Bring them back
     // The test run was for the files as they were, so Keep needs them run again.
     assert.throws(() => keep(t.app, {}), /changed since the tests last ran/);
 
-    // Going back further before her next message: Bring them back still brings back everything there was before the first.
+    // Going back further before the next message: Bring them back still brings back everything there was before the first.
     assert.deepEqual(goBack(t.app, first.sha).discarded, ['Added a toggle', 'Remembered the choice']);
     assert.equal(fs.readFileSync(path.join(t.app, 'data', 'app.db'), 'utf8'), 'rows: 1');
     assert.throws(() => goBack(t.app, third.sha), /isn't one of this feature's/);
@@ -611,19 +631,19 @@ test('Go back to here: develop and data/ back to the checkpoint; Bring them back
     assert.deepEqual(JSON.parse(pushed.stdout), { pushed: ['develop'], failed: [] }, pushed.stderr);
     assert.equal(remoteSha(t.origin, 'develop'), second.sha);
 
-    // Her next message lets the later checkpoint go and tells Claude, once.
+    // The next message lets the later checkpoint go and tells Claude, once.
     const sent = t.hook('prompt-submit', { prompt: 'Make the toggle blue' });
     assert.equal(sent.status, 0, sent.stderr);
     assert.equal(
       sent.stdout,
-      `[studio] She went back to the checkpoint "Added a toggle": the app's code and data are as they were then. The change after it was discarded: "Remembered the choice". Don't assume anything from them is still there.`
+      `[studio] The user went back to the checkpoint "Added a toggle": the app's code and data are as they were then. The change after it was discarded: "Remembered the choice". Don't assume anything from them is still there.`
     );
     assert.equal(read(t.app).wentBack, null);
     assert.throws(() => bringBack(t.app), /nothing to bring back/);
     assert.deepEqual(fs.readdirSync(path.join(stateDir(t.app), 'snapshots')).sort(), [read(t.app).feature.base, first.sha, second.sha].sort());
     assert.equal(t.hook('prompt-submit', { prompt: 'And bigger' }).stdout, '');
 
-    // Work goes on from there; and a feature closed while she has gone back leaves nothing to bring back.
+    // Work goes on from there; and a feature closed after going back leaves nothing to bring back.
     t.turn('Make it bigger', () => write('toggle.js', 'big toggle\n'), 'Checkpoint: Made the toggle bigger');
     assert.deepEqual(read(t.app).feature.checkpoints.map((checkpoint) => checkpoint.label), ['Made the page dark', 'Added a toggle', 'Made the toggle bigger']);
     goBack(t.app, first.sha);
@@ -893,7 +913,7 @@ test('summarise falls back to the checkpoint labels when the summariser fails, p
     assert.equal(digest.status, 0, digest.stderr);
     const text = fs.readFileSync(digest.stdout.trim(), 'utf8');
     assert.match(text, /# The feature: dark mode/);
-    assert.match(text, /1\. Made the page dark\n   She asked: Make it dark/);
+    assert.match(text, /1\. Made the page dark\n   The user asked: Make it dark/);
     assert.match(text, /toggle\.js/);
     assert.match(text, /## v1 Getting Started/);
   } finally {
@@ -927,7 +947,7 @@ test('Ask and Plan turns: edits to the app are denied, what a command changed is
     t.run(['start', 'dark mode']);
     t.turn('Make it dark', () => fs.writeFileSync(path.join(t.app, 'toggle.js'), 'toggle\n'), 'Checkpoint: Added a toggle');
     assert.ok(await until(() => remoteSha(t.origin, 'develop') === git(t.app, 'rev-parse', 'HEAD')), 'the checkpoint is pushed, so the refs settle');
-    // Build work not yet checkpointed (a turn she interrupted): an edit, a new file and a deleted tracked file.
+    // Build work not yet checkpointed (an interrupted turn): an edit, a new file and a deleted tracked file.
     fs.writeFileSync(path.join(t.app, 'page.html'), '<h1 class="dark">Getting started</h1>\n');
     fs.writeFileSync(path.join(t.app, 'notes.txt'), 'mine\n');
     fs.rmSync(path.join(t.app, 'toggle.js'));
@@ -938,7 +958,7 @@ test('Ask and Plan turns: edits to the app are denied, what a command changed is
       t.withEnv(() => setMode(t.app, mode));
       const submitted = t.hook('prompt-submit', { prompt: mode === 'ask' ? 'Why is the page dark?' : 'Plan a settings page' });
       assert.equal(submitted.status, 0, submitted.stderr);
-      assert.match(submitted.stdout, mode === 'ask' ? /^\[studio\] Ask mode: .*Don't change the app's files/ : /^\[studio\] Plan mode: .*one question per reply, in plain words, with the answer you recommend.*Never ask her about technical choices.*publish it as an artifact/);
+      assert.match(submitted.stdout, mode === 'ask' ? /^\[studio\] Ask mode: .*Don't change the app's files/ : /^\[studio\] Plan mode: .*one question per reply, in plain words, with the answer you recommend.*Never ask them about technical choices.*publish it as an artifact/);
 
       // Edits to the app's files are denied, with the reason, in the shape Claude Code reads; subagents' too.
       const deny = (event) => {
@@ -1039,7 +1059,7 @@ test('a preview note comes before the mode, and starts nothing', async () => {
   try {
     preview(t.app, 'v1');
     setMode(t.app, 'ask');
-    assert.match(t.hook('prompt-submit', { prompt: 'Look' }).stdout, /^\[studio\] She is previewing v1/);
+    assert.match(t.hook('prompt-submit', { prompt: 'Look' }).stdout, /^\[studio\] The user is previewing v1/);
     fs.writeFileSync(path.join(t.app, 'page.html'), 'changed\n');
     t.hook('stop', { last_assistant_message: 'Looked.' });
     assert.equal(git(t.app, 'status', '--porcelain'), '', 'the Ask turn is put back during a preview too');

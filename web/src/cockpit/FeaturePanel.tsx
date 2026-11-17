@@ -17,7 +17,7 @@ type StartFeatureProps = {
   autoFocus?: boolean
 }
 
-/** A box to name a feature, and Start: develop is reset to the latest version and the chat starts afresh. */
+/** A box to name a feature, and Start: develop is reset to the latest version; the chat carries on into it. */
 export const StartFeature = ({ hint, onStarted, onCancel, autoFocus }: StartFeatureProps) => {
   const tip = useTip()
   const { refresh } = useControls()
@@ -182,8 +182,8 @@ const KeepOrDiscard = ({ w, feature }: { w: App; feature: Feature }) => {
 }
 
 /**
- * The checkpoints, oldest first, each with what she asked for and (but the newest) [Go back to here], which asks first, naming
- * the later checkpoints it discards. After going back, [Bring them back] restores them until her next message.
+ * The checkpoints, oldest first, each with what the user asked for and (but the newest) [Go back to here], which asks first, naming
+ * the later checkpoints it discards. After going back, [Bring them back] restores them until the next message.
  */
 const Checkpoints = ({ w, feature }: { w: App; feature: Feature }) => {
   const tip = useTip()
@@ -251,7 +251,7 @@ const Checkpoints = ({ w, feature }: { w: App; feature: Feature }) => {
   )
 }
 
-/** The Feature section's body: the feature being built and its checkpoints (each with what she asked for), Keep and Discard; or a way to start one. */
+/** The Feature section's body: the feature being built and its checkpoints (each with what the user asked for), Keep and Discard; or a way to start one. */
 export const FeaturePanel = ({ w }: { w: App | null }) => {
   const feature = w?.feature
   if (w?.preview && !feature) return <p className="text-sm text-muted-foreground">You're previewing {w.preview.tag}. Go back to the latest version to start a feature.</p>

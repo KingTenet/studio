@@ -23,7 +23,7 @@ export type Checkpoint = {
   sha: string
   /** The reply's `Checkpoint:` line, else its first sentence. */
   label: string
-  /** What she asked for in that turn. */
+  /** What the user asked for in that turn. */
   prompt: string
   at: string
 }
@@ -31,7 +31,7 @@ export type Checkpoint = {
 /** The feature being built: develop, from main at `base`, with a checkpoint per Build turn that changed files. */
 export type Feature = { name: string; startedAt: string; base: string; checkpoints: Checkpoint[] }
 
-/** After going back to a checkpoint, until her next message: the one she went back to and the later checkpoints' labels, which Bring them back restores. */
+/** After going back to a checkpoint, until the next message: the one gone back to and the later checkpoints' labels, which Bring them back restores. */
 export type WentBack = { to: { sha: string; label: string }; discarded: string[] }
 
 /**
@@ -85,7 +85,7 @@ export type App = {
   versions: Version[]
   /** The old version being previewed, or null when the app is at the latest. */
   preview: Preview | null
-  /** The chat's switch: what her next message may do. */
+  /** The chat's switch: what the next message may do. */
   mode: Mode
 }
 

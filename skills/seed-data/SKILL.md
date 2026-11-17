@@ -16,5 +16,5 @@ allowed-tools: Bash(npx tsx scripts/seed-data.ts)
    npx tsx scripts/seed-data.ts
    ```
 
-3. Say what it added, from what it printed, and that the App tab shows it once she clicks its reload
+3. Say what it added, from what it printed, and that the App tab shows it once the user clicks its reload
    button. If it failed, say why in plain words.

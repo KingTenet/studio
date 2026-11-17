@@ -19,7 +19,7 @@ const blockedBy = (w: App) => {
   return ''
 }
 
-/** The conversation a version was built in, read-only: what she asked and what Claude said and did. */
+/** The conversation a version was built in, read-only: what the user asked and what Claude said and did. */
 const Transcript = ({ version, sessionId, onClose }: { version: Version; sessionId: string; onClose: () => void }) => {
   const [messages, setMessages] = useState<ChatMessage[] | null>(null)
   const [missing, setMissing] = useState(false)

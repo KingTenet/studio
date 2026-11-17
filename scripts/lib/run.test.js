@@ -17,7 +17,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const STUDIO = path.resolve(__dirname, '..', '..', 'bin', 'studio');
-const IDENTITY = { GIT_AUTHOR_NAME: 'Her', GIT_AUTHOR_EMAIL: 'her@example.com', GIT_COMMITTER_NAME: 'Her', GIT_COMMITTER_EMAIL: 'her@example.com' };
+const IDENTITY = { GIT_AUTHOR_NAME: 'Test User', GIT_AUTHOR_EMAIL: 'user@example.com', GIT_COMMITTER_NAME: 'Test User', GIT_COMMITTER_EMAIL: 'user@example.com' };
 
 const NPM = `#!/bin/sh
 echo "npm $*" >>"$NPM_LOG"
@@ -95,7 +95,7 @@ test('studio run: the newest version from its own copy and data, upgraded forwar
 
   s.version('v1');
   s.version('v2');
-  // Her app is mid-feature: its files are ahead of every version, and the run must not care.
+  // The app is mid-feature: its files are ahead of every version, and the run must not care.
   fs.writeFileSync(path.join(s.app, 'server', 'index.ts'), server('half-built'));
 
   result = s.run('my-app');

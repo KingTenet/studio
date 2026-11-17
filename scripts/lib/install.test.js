@@ -31,9 +31,9 @@ esac`),
   "auth status") [ -f "$STATE/gh-authed" ] ;;
   "auth login") touch "$STATE/gh-authed" ;;
   "auth setup-git") ;;
-  "api user") echo her-gh ;;
+  "api user") echo user-gh ;;
   "api --method") [ "$3" = PUT ] && echo "$4" >>"$STATE/collaborators" ;;
-  "repo view") name=\${3#her-gh/}; [ -d "$REMOTES/$name.git" ] || exit 1; [ "$4" = --json ] && echo "$REMOTES/$name" || true ;;
+  "repo view") name=\${3#user-gh/}; [ -d "$REMOTES/$name.git" ] || exit 1; [ "$4" = --json ] && echo "$REMOTES/$name" || true ;;
   "repo create") case " $* " in *" --private "*) ;; *) echo "not private" >&2; exit 1 ;; esac
     git init -q --bare -b main "$REMOTES/$3.git" ;;
   *) exit 1 ;;
@@ -88,7 +88,7 @@ const setup = () => {
 
 test('install.sh sets everything up once, and a second run changes nothing', () => {
   const { dirs, env, install, log, git, app } = setup();
-  const first = install(['--collaborator', 'helper-gh'], 'Her Name\nher@example.com\n');
+  const first = install(['--app', 'my-app', '--collaborator', 'helper-gh'], 'Test User\nuser@example.com\n');
   assert.equal(first.status, 0, first.stdout + first.stderr);
   assert.match(first.stdout, /studio up/);
 
@@ -103,10 +103,10 @@ test('install.sh sets everything up once, and a second run changes nothing', () 
   assert.match(log(), /^claude auth login --claudeai$/m);
   assert.ok(fs.existsSync(path.join(dirs.home, '.claude', 'hooks', 'herdr-agent-state.sh')));
   const gitconfig = fs.readFileSync(path.join(dirs.home, '.gitconfig'), 'utf8');
-  assert.match(gitconfig, /name = Her Name/);
-  assert.match(gitconfig, /email = her@example.com/);
+  assert.match(gitconfig, /name = Test User/);
+  assert.match(gitconfig, /email = user@example.com/);
 
-  // Her app: the template's two versions with their annotated tags, develop = main, and origin her GitHub repo.
+  // The app: the template's two versions with their annotated tags, develop = main, and origin its GitHub repo.
   assert.deepEqual(git(app, 'log', '--format=%s', 'main').split('\n'), ['Add an example todo list', 'Getting Started']);
   assert.equal(git(app, 'cat-file', '-t', 'v1'), 'tag');
   assert.equal(git(app, 'tag', '-l', '--format=%(contents:subject)', 'v2'), 'v2 Add an example todo list');
@@ -116,7 +116,7 @@ test('install.sh sets everything up once, and a second run changes nothing', () 
   assert.equal(git(app, 'remote', 'get-url', 'origin'), remote);
   assert.deepEqual(git(remote, 'for-each-ref', '--format=%(refname)').split('\n').sort(), ['refs/heads/develop', 'refs/heads/main', 'refs/tags/v1', 'refs/tags/v2']);
   assert.equal(git(remote, 'cat-file', '-t', 'v2'), 'tag');
-  assert.equal(fs.readFileSync(path.join(dirs.state, 'collaborators'), 'utf8'), 'repos/her-gh/my-app/collaborators/helper-gh\n');
+  assert.equal(fs.readFileSync(path.join(dirs.state, 'collaborators'), 'utf8'), 'repos/user-gh/my-app/collaborators/helper-gh\n');
 
   // The studio: config.json, `studio` on the PATH and the cockpit built.
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dirs.home, '.studio', 'config.json'), 'utf8')), { appDir: app, name: 'my-app', appPort: 4001 });
@@ -135,48 +135,90 @@ test('install.sh sets everything up once, and a second run changes nothing', () 
   assert.match(script, new RegExp(`do shell script "export PATH=${dirs.home}/\\.local/bin:/opt/homebrew/bin:/usr/local/bin:\\$PATH; studio run my-app"`));
   assert.match(script, /display dialog message/);
 
-  // Her own changes since, which a second run must leave alone.
-  fs.writeFileSync(path.join(dirs.home, '.studio', 'config.json'), JSON.stringify({ appDir: app, name: 'Her App', appPort: 4001 }));
+  // The user's own changes since, which a second run must leave alone.
+  fs.writeFileSync(path.join(dirs.home, '.studio', 'config.json'), JSON.stringify({ appDir: app, name: 'My App', appPort: 4001 }));
   fs.writeFileSync(path.join(app, 'notes.txt'), 'work in progress');
   const zprofile = fs.readFileSync(path.join(dirs.home, '.zprofile'), 'utf8');
   fs.writeFileSync(env.LOG, '');
 
-  const second = install(['--collaborator', 'helper-gh']); // no input: it must not ask anything
+  const second = install(['--app', 'my-app', '--collaborator', 'helper-gh']); // no input: it must not ask anything
   assert.equal(second.status, 0, second.stdout + second.stderr);
   assert.doesNotMatch(log(), /^brew /m);
   assert.doesNotMatch(log(), /^claude-installer$/m);
   assert.doesNotMatch(log(), /auth login|repo create/);
   assert.doesNotMatch(log(), /^herdr integration install/m);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(dirs.home, '.studio', 'config.json'), 'utf8')).name, 'Her App');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dirs.home, '.studio', 'config.json'), 'utf8')).name, 'My App');
   assert.equal(fs.readFileSync(path.join(app, 'notes.txt'), 'utf8'), 'work in progress');
   assert.equal(fs.readFileSync(path.join(dirs.home, '.zprofile'), 'utf8'), zprofile);
   assert.match(second.stdout, /already there \(left as it is\)/);
 });
 
-test('on a new Mac, her app is copied from her GitHub repo rather than made again from the template', () => {
+test('on a new Mac, the app is copied from its GitHub repo rather than made again from the template', () => {
   const { install, git, app } = setup();
-  assert.equal(install([], 'Her\nher@example.com\n').status, 0);
+  assert.equal(install(['--app', 'my-app'], 'Test User\nuser@example.com\n').status, 0);
   git(app, 'checkout', '-q', 'develop');
   fs.writeFileSync(path.join(app, 'page.txt'), 'a checkpoint');
   git(app, 'add', '-A');
-  execFileSync('git', ['-C', app, 'commit', '-q', '-m', 'A checkpoint'], { env: { ...process.env, GIT_AUTHOR_NAME: 'Her', GIT_AUTHOR_EMAIL: 'h@e', GIT_COMMITTER_NAME: 'Her', GIT_COMMITTER_EMAIL: 'h@e' } });
+  execFileSync('git', ['-C', app, 'commit', '-q', '-m', 'A checkpoint'], { env: { ...process.env, GIT_AUTHOR_NAME: 'Test User', GIT_AUTHOR_EMAIL: 'u@e', GIT_COMMITTER_NAME: 'Test User', GIT_COMMITTER_EMAIL: 'u@e' } });
   git(app, 'push', '-q', 'origin', 'develop');
   const develop = git(app, 'rev-parse', 'develop');
   fs.rmSync(app, { recursive: true });
 
-  const again = install();
+  const again = install(['--app', 'my-app']);
   assert.equal(again.status, 0, again.stdout + again.stderr);
   assert.match(again.stdout, /already on GitHub, so it's copied from there/);
   assert.equal(git(app, 'rev-parse', 'develop'), develop);
   assert.equal(git(app, 'cat-file', '-t', 'v1'), 'tag');
 });
 
+test('without --app it sets up the Mac but makes no app, and `studio new` makes one afterwards', () => {
+  const { dirs, env, install, log, git, app } = setup();
+  const run = install([], 'Test User\nuser@example.com\n');
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.match(run.stdout, /studio new <name>/);
+  assert.ok(!fs.existsSync(path.join(dirs.home, 'Studio')));
+  assert.ok(!fs.existsSync(path.join(dirs.home, '.studio', 'config.json')));
+  assert.ok(!fs.existsSync(path.join(dirs.home, 'Applications')));
+  assert.doesNotMatch(log(), /repo create/);
+
+  const studio = path.join(dirs.home, '.local', 'bin', 'studio');
+  const made = spawnSync(studio, ['new', 'my-app', '--collaborator', 'helper-gh'], { env, encoding: 'utf8' });
+  assert.equal(made.status, 0, made.stdout + made.stderr);
+  assert.match(made.stdout, /studio up/);
+  assert.equal(git(app, 'tag', '-l', '--format=%(contents:subject)', 'v2'), 'v2 Add an example todo list');
+  assert.equal(git(app, 'rev-parse', 'develop'), git(app, 'rev-parse', 'main'));
+  const remote = path.join(dirs.remotes, 'my-app.git');
+  assert.deepEqual(git(remote, 'for-each-ref', '--format=%(refname)').split('\n').sort(), ['refs/heads/develop', 'refs/heads/main', 'refs/tags/v1', 'refs/tags/v2']);
+  assert.equal(fs.readFileSync(path.join(dirs.state, 'collaborators'), 'utf8'), 'repos/user-gh/my-app/collaborators/helper-gh\n');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dirs.home, '.studio', 'config.json'), 'utf8')), { appDir: app, name: 'my-app', appPort: 4001 });
+  assert.ok(fs.existsSync(path.join(dirs.home, 'Applications', 'my-app.app')));
+
+  // Run again, it skips what's done and leaves the config alone.
+  const again = spawnSync(studio, ['new', 'my-app'], { env, encoding: 'utf8' });
+  assert.equal(again.status, 0, again.stdout + again.stderr);
+  assert.match(again.stdout, /already works on my-app/);
+});
+
+test('`studio new` before GitHub is logged in says to run the installer', () => {
+  const { env } = setup();
+  const run = spawnSync(path.join(STUDIO_DIR, 'bin', 'studio'), ['new', 'my-app'], { env, encoding: 'utf8' });
+  assert.equal(run.status, 1);
+  assert.match(run.stderr, /GitHub isn't logged in\. Run \.\/install\.sh/);
+});
+
+test('--collaborator without --app is refused', () => {
+  const { install } = setup();
+  const run = install(['--collaborator', 'helper-gh']);
+  assert.equal(run.status, 2);
+  assert.match(run.stderr, /needs --app/);
+});
+
 test('a failed step stops with a plain message naming it', () => {
   const { install, env } = setup();
   fs.writeFileSync(path.join(env.CELLAR, 'gh'), script('exit 1'), { mode: 0o755 }); // GitHub's login fails
-  const run = install([], 'Her\nher@example.com\n');
+  const run = install([], 'Test User\nuser@example.com\n');
   assert.equal(run.status, 1);
-  assert.match(run.stderr, /Setup stopped while: Logging into GitHub \(her own account\)\./);
+  assert.match(run.stderr, /Setup stopped while: Logging into GitHub \(your account\)\./);
   assert.match(run.stderr, /run \.\/install\.sh again/);
 });
 
@@ -194,7 +236,7 @@ test("on a Mac whose Homebrew belongs to another account, it says so instead of 
   fs.chmodSync(path.join(prefix, 'bin'), 0o555);
   const brew = fs.readFileSync(path.join(env.BIN, '..', 'stubs', 'brew'), 'utf8');
   fs.writeFileSync(path.join(env.BIN, '..', 'stubs', 'brew'), brew.replace('[ "$1" = install ] || exit 1', `[ "$1" = --prefix ] && { echo "${prefix}"; exit 0; }\n[ "$1" = install ] || exit 1`), { mode: 0o755 });
-  const run = install([], 'Her\nher@example.com\n');
+  const run = install([], 'Test User\nuser@example.com\n');
   fs.chmodSync(path.join(prefix, 'bin'), 0o755);
   assert.equal(run.status, 1);
   assert.match(run.stderr, /Homebrew on this Mac belongs to another account \(.+\), so this one can't add herdr\. Ask that account to run: brew install herdr/);
@@ -208,7 +250,7 @@ test("a Claude Code download that drops over HTTP/2 is tried again over HTTP/1.1
 case "$*" in *claude-install.sh*) grep -qs '^http1.1$' "$CURL_HOME/.curlrc" || { echo "curl: (92) HTTP/2 stream 1 was not closed cleanly" >&2; exit 92; } ;; esac
 exec /usr/bin/curl "$@"
 `, { mode: 0o755 });
-  const run = install([], 'Her\nher@example.com\n');
+  const run = install([], 'Test User\nuser@example.com\n');
   assert.equal(run.status, 0, run.stdout + run.stderr);
   assert.match(run.stdout, /trying again over HTTP\/1\.1/);
   assert.equal(log().match(/^claude-installer$/gm)?.length, 1);

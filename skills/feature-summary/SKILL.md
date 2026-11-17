@@ -13,7 +13,7 @@ The argument is the path of a digest file. Read all of it with the Read tool (us
 read doesn't cover it). It holds, in order:
 
 - the feature's name;
-- its checkpoints, oldest first: what each change did, and what she asked for (later ones can
+- its checkpoints, oldest first: what each change did, and what the user asked for (later ones can
   undo or change earlier ones);
 - the files changed, and the changes themselves (possibly cut short);
 - the app's FEATURES.md so far: what earlier versions added.
@@ -30,4 +30,4 @@ Whatever you print goes into FEATURES.md as is.
 - Then, briefly, where it lives for whoever builds on it later: the route or page, and the API
   calls or tables it adds or changes, in backticks, when the changes show them.
 - Describe the end result, not the steps or the conversation. Skip what was tried and undone.
-- Use her names for things, from what she asked for.
+- Use the user's names for things, from what they asked for.

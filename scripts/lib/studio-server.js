@@ -397,7 +397,7 @@ const suspectTranscript = (text) => text !== '' && !/[\p{L}\p{N}]/u.test(text);
 
 // With keepDictationClips: true in config.json, every dictated clip and what's known about it, to look into text that came
 // out wrong or cut short: a folder per recording, its clips, and summary.json once it's stopped. A week's worth is kept
-// (about 2 MB a minute of speech). Off by default, so nothing she says is written to disk.
+// (about 2 MB a minute of speech). Off by default, so nothing said is written to disk.
 const DICTATION_DIR = path.join(path.dirname(ACTIONS_LOG), 'dictation');
 const DICTATION_KEEP_MS = 7 * 24 * 60 * 60_000;
 const keepsClips = (config = readConfig()) => config.keepDictationClips === true;
@@ -1216,7 +1216,7 @@ const effortTyped = new Map();
  * Types `/effort <level>` for the chat's mode (Ask low, Plan high, Build medium) into the chat's Claude, when its session hasn't
  * had that level yet: a new session (started, resumed or /clear-ed) or a new mode. Only while it sits idle at an empty prompt,
  * since typed into a turn it would wait in Claude's queue: while Claude works, a later call does it (the server tries every few
- * seconds, and before each message the chat sends). /effort also saves the level as her default; the next mode change or
+ * seconds, and before each message the chat sends). /effort also saves the level as the user's default; the next mode change or
  * session sets it again. True when it typed; false too when herdr couldn't be reached.
  */
 const syncEffort = (appDir) => {
@@ -1238,7 +1238,7 @@ const PUSH_RETRY_MS = 60_000;
 
 /**
  * Sets the chat's switch ({ mode }: ask, plan or build) and the effort for it. Allowed while Claude works: the turn under way
- * keeps its mode, and her next message runs in the new one.
+ * keeps its mode, and the next message runs in the new one.
  */
 const setModeNow = async (req, res) => {
   const { mode } = JSON.parse(await readBody(req));
@@ -1253,9 +1253,20 @@ const setModeNow = async (req, res) => {
 };
 
 /**
- * Starts a feature by name (feature.js start: develop reset to main, data/ snapshotted), pushes develop and runs
- * /clear in the chat's Claude pane, so the feature's conversation starts afresh. Refused while Claude is working or
- * waiting on a prompt, since /clear would be typed into that.
+ * Runs /clear in the chat's Claude pane when a feature ends (Keep or Discard), so the next one's conversation starts afresh.
+ * Not when one starts: what was asked or planned before naming it is part of it. Callers refuse first while Claude is busy,
+ * since /clear would be typed into a question.
+ */
+const clearChat = async (chat) => {
+  if (!chat) return;
+  execFileSync('herdr', ['pane', 'run', chat.paneId, '/clear'], { stdio: 'ignore', timeout: 5000 });
+  // Time for /clear to run, so a message sent next goes to the cleared conversation and not into the input box beside it.
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+};
+
+/**
+ * Starts a feature by name (feature.js start: develop reset to main, data/ snapshotted) and pushes develop. The chat's
+ * conversation carries on into it. Refused while Claude is working or waiting on a prompt.
  */
 const startFeatureNow = async (req, res) => {
   const { name } = JSON.parse(await readBody(req));
@@ -1274,11 +1285,6 @@ const startFeatureNow = async (req, res) => {
     return;
   }
   pushInBackground(appDir);
-  if (chat) {
-    execFileSync('herdr', ['pane', 'run', chat.paneId, '/clear'], { stdio: 'ignore', timeout: 5000 });
-    // Time for /clear to run, so a message sent next goes to the cleared conversation and not into the input box beside it.
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
   sendJson(res, 200, feature);
 };
 
@@ -1298,13 +1304,14 @@ const checkFeatureNow = async (req, res) => {
 };
 
 /**
- * Keeps the feature as the next version ({ summary, anyway }: the summary she saw, and whether she chose to keep it although
- * its tests fail), then pushes main, its tag and develop in the background.
+ * Keeps the feature as the next version ({ summary, anyway }: the summary the user saw, and whether they chose to keep it although
+ * its tests fail), then pushes main, its tag and develop in the background, and clears the chat for the next feature.
  */
 const keepFeatureNow = async (req, res) => {
   const { summary, anyway } = JSON.parse(await readBody(req, MAX_MESSAGE * 2));
   const appDir = appInfo().dir;
-  if (refuseWhileBusy(res, chatAgent(appDir), 'Keep it')) return;
+  const chat = chatAgent(appDir);
+  if (refuseWhileBusy(res, chat, 'Keep it')) return;
   let kept;
   try {
     kept = keepFeature(appDir, { summary: typeof summary === 'string' ? summary : '', anyway: anyway === true });
@@ -1313,13 +1320,15 @@ const keepFeatureNow = async (req, res) => {
     return;
   }
   pushInBackground(appDir, ['main']);
+  await clearChat(chat);
   sendJson(res, 200, kept);
 };
 
-/** Discards the feature: develop back to main, data/ back to how it was at the feature's start; develop is pushed. */
+/** Discards the feature: develop back to main, data/ back to how it was at the feature's start; develop is pushed and the chat cleared. */
 const discardFeatureNow = async (req, res) => {
   const appDir = appInfo().dir;
-  if (refuseWhileBusy(res, chatAgent(appDir), 'Discard it')) return;
+  const chat = chatAgent(appDir);
+  if (refuseWhileBusy(res, chat, 'Discard it')) return;
   let discarded;
   try {
     discarded = discardFeature(appDir);
@@ -1328,6 +1337,7 @@ const discardFeatureNow = async (req, res) => {
     return;
   }
   pushInBackground(appDir);
+  await clearChat(chat);
   sendJson(res, 200, discarded);
 };
 
@@ -1347,7 +1357,7 @@ const goBackNow = async (req, res) => {
   sendJson(res, 200, wentBack);
 };
 
-/** Brings back what going back dropped, until her next message is sent; develop is pushed. */
+/** Brings back what going back dropped, until the next message is sent; develop is pushed. */
 const bringBackNow = async (req, res) => {
   const appDir = appInfo().dir;
   if (refuseWhileBusy(res, chatAgent(appDir), 'Bring them back')) return;

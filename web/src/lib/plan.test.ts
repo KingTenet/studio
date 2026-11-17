@@ -85,14 +85,14 @@ describe('onPublish / afterBuild', () => {
     expect(onPublish(pane('app'), false)).toEqual({ preview: true, show: null })
   })
 
-  it('leaves a drawing she has not sent where it is', () => {
+  it('leaves an unsent drawing where it is', () => {
     expect(onPublish(pane('draw', true), true)).toEqual({ preview: true, show: null })
     expect(onPublish(pane('artifacts', false, true), true)).toEqual({ preview: false, show: null })
-    // Ink on the Draw tab doesn't hold her on the app.
+    // Ink on the Draw tab doesn't hold the pane on the app.
     expect(onPublish(pane('app', true), true)).toEqual({ preview: true, show: 'artifacts' })
   })
 
-  it('goes back to the app after a Build turn, unless a drawing she has not sent is showing', () => {
+  it('goes back to the app after a Build turn, unless an unsent drawing is showing', () => {
     expect(afterBuild(pane('artifacts'))).toBe('app')
     expect(afterBuild(pane('draw'))).toBe('app')
     expect(afterBuild(pane('app'))).toBeNull()

@@ -31,12 +31,12 @@ export const watchTurn = (watch: TurnWatch, chat: Agent | null, mode: Mode): { w
   return { watch, buildEnded: false }
 }
 
-/** What the middle pane shows, and whether there is a drawing she hasn't sent: on the Draw tab, or over the previewed artifact. */
+/** What the middle pane shows, and whether there is an unsent drawing: on the Draw tab, or over the previewed artifact. */
 export type MiddlePane = { source: 'app' | 'artifacts' | 'draw'; drawInk: boolean; artifactInk: boolean }
 
 /**
  * What a new publish (an artifact, or a new version of one) does to the middle pane: previewed in the Artifacts tab, which it
- * switches to when the chat's Claude published it (a plan or an explainer). A drawing she hasn't sent holds it: one over the
+ * switches to when the chat's Claude published it (a plan or an explainer). An unsent drawing holds it: one over the
  * previewed artifact keeps that artifact, one on the Draw tab keeps the Draw tab.
  */
 export const onPublish = (pane: MiddlePane, fromChat: boolean): { preview: boolean; show: 'artifacts' | null } => {
@@ -44,7 +44,7 @@ export const onPublish = (pane: MiddlePane, fromChat: boolean): { preview: boole
   return { preview: true, show: fromChat && !(pane.source === 'draw' && pane.drawInk) && pane.source !== 'artifacts' ? 'artifacts' : null }
 }
 
-/** Where the middle pane goes when a Build turn ends: back to the app, unless a drawing she hasn't sent is on the tab she's on. */
+/** Where the middle pane goes when a Build turn ends: back to the app, unless an unsent drawing is on the tab showing. */
 export const afterBuild = (pane: MiddlePane): 'app' | null => {
   if (pane.source === 'app') return null
   if (pane.source === 'draw' && pane.drawInk) return null

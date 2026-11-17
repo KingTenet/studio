@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * The feature being built in the app, and its checkpoints: the version control she never has to think about.
+ * The feature being built in the app, and its checkpoints: the version control the user never has to think about.
  *
  * The app's repo has two branches: main (the versions kept) and develop (the feature being built). Starting a
  * feature resets develop to main and checks it out. After every Build turn that changed files, the Stop hook
@@ -19,19 +19,19 @@
  *   gate.json         the last run of the tests Keep is gated on: { tree, ok, at, results: [{ name, ok, output }] }, for the
  *                     files as they were (tree), so Keep knows whether they still hold
  *   summary-digest.md what the feature summary (feature-summary.sh) is written from
- *   went-back.json    after going back to a checkpoint, until her next message: { to: { sha, label }, head, tree,
+ *   went-back.json    after going back to a checkpoint, until the user's next message: { to: { sha, label }, head, tree,
  *                     checkpoints, at }, what develop, the files (tree, uncommitted ones too) and the checkpoints were
  *                     before, so Bring them back can restore them; data/ as it was is in snapshots/went-back/
- *   preview.json      while she previews an old version: { tag, sha, branch, tree, at, packagesDiffer }, the version shown and the
+ *   preview.json      while an old version is being previewed: { tag, sha, branch, tree, at, packagesDiffer }, the version shown and the
  *                     branch and files (tree, uncommitted ones too) to go back to; data/ as it was is in snapshots/preview/
  *   versions.json     { <tag>: { sessions: [session id] } }: the Claude sessions each kept version was built in, oldest first
  *   mode.json         { mode, at }: the chat's Ask / Plan / Build switch (Build when absent)
  *   refused.json      { at, leaks }: the last checkpoint wasn't saved because the changes held values from .env (leaks names the
  *                     files and keys, never the values), until the next checkpoint is saved or the feature closes
- *   turns/<session>.json  the mode the session's last turn runs in, as the switch was when her message was sent: { mode, at, start },
+ *   turns/<session>.json  the mode the session's last turn runs in, as the switch was when the user's message was sent: { mode, at, start },
  *                     start (Ask and Plan only) being where the app was then ({ branch, head, tree }), for the Stop hook to put back
  *
- * The switch decides what a turn may do. Build changes the app and makes checkpoints. Ask (answer her) and Plan (write a plan,
+ * The switch decides what a turn may do. Build changes the app and makes checkpoints. Ask (answer the user) and Plan (write a plan,
  * published as an artifact) only read and run: an edit to the app's files is refused (PreToolUse), and whatever the turn changed
  * anyway, through a command, is put back when it ends (Stop), leaving any changes from before it; no feature is started or
  * checkpointed for them.
@@ -41,9 +41,9 @@
  * resets develop to main and puts data/ back as it was when the feature started. Either way the feature closes.
  *
  * Going back to a checkpoint resets develop and data/ to it and drops the later checkpoints; Bring them back undoes that
- * exactly, until her next message, which lets them go for good and tells Claude she went back.
+ * exactly, until the user's next message, which lets them go for good and tells Claude about going back.
  *
- * With no feature open she can preview an old version (its code checked out, detached, so no branch moves; data/ put back
+ * With no feature open, an old version can be previewed (its code checked out, detached, so no branch moves; data/ put back
  * on the way out) or restore one: a new commit on main with that version's code, tagged as the next version.
  *
  * Usage: node lib/feature.js prompt-submit         UserPromptSubmit hook: notes the prompt; starts a feature if none is open;
@@ -52,7 +52,7 @@
  *                                                  hold a value from the app's .env, commits nothing and tells Claude to move it.
  *                                                  After an Ask or Plan turn, puts back what it changed instead
  *        node lib/feature.js pre-tool-use          PreToolUse hook: refuses an edit to the app's files in an Ask or Plan turn
- *        node lib/feature.js start <name> [app]    start a feature (the cockpit's server does this, and runs /clear)
+ *        node lib/feature.js start <name> [app]    start a feature (the cockpit's server does this; it runs /clear when one ends)
  *        node lib/feature.js push [app] [branch…]  push develop, those branches and every branch whose push failed
  *        node lib/feature.js show [app]            the open feature and pending pushes, as JSON
  *        node lib/feature.js digest [app]          write the summary's digest of the open feature; prints its path
@@ -136,7 +136,7 @@ const wentBackView = (wentBack) => {
   return { to: wentBack.to, discarded: wentBack.checkpoints.slice(at + 1).map((checkpoint) => checkpoint.label) };
 };
 
-/** The version she is previewing, for the cockpit: { tag, name, at, packagesDiffer }, or null. */
+/** The version being previewed, for the cockpit: { tag, name, at, packagesDiffer }, or null. */
 const previewView = (preview) => (preview ? { tag: preview.tag, name: preview.name, at: preview.at, packagesDiffer: preview.packagesDiffer } : null);
 
 /**
@@ -200,7 +200,7 @@ const SQLITE_COPY = `const { DatabaseSync, backup } = require('node:sqlite');
 /**
  * Puts the app's data/ back as a snapshot has it: everything in it but logs/ is removed, then the snapshot copied in.
  * An SQLite database that both have is written over in place, with SQLite's own backup, rather than deleted and copied:
- * the app's dev server holds it open, and would otherwise keep reading and writing the deleted file, so what she did in
+ * the app's dev server holds it open, and would otherwise keep reading and writing the deleted file, so what the user did in
  * the app afterwards would be lost. Done this way, the server's connection sees the restored data at its next query.
  */
 const restoreData = (appDir, sha) => {
@@ -498,7 +498,7 @@ const runGate = async (appDir, now = new Date()) => {
 };
 
 /**
- * Writes what the feature summary is written from: the feature's name, each checkpoint with what she asked for, the files
+ * Writes what the feature summary is written from: the feature's name, each checkpoint with what the user asked for, the files
  * changed and the changes themselves (cut short when long), and FEATURES.md so far. Returns the file's path.
  */
 const writeDigest = (appDir) => {
@@ -515,8 +515,8 @@ const writeDigest = (appDir) => {
   })();
   const text = [
     `# The feature: ${feature.name}`,
-    '## Its checkpoints, oldest first, each with what she asked for',
-    feature.checkpoints.map((checkpoint, i) => `${i + 1}. ${checkpoint.label}${checkpoint.prompt ? `\n   She asked: ${checkpoint.prompt.replace(/\s+/g, ' ')}` : ''}`).join('\n') || '(none: the changes below were never checkpointed)',
+    '## Its checkpoints, oldest first, each with what the user asked for',
+    feature.checkpoints.map((checkpoint, i) => `${i + 1}. ${checkpoint.label}${checkpoint.prompt ? `\n   The user asked: ${checkpoint.prompt.replace(/\s+/g, ' ')}` : ''}`).join('\n') || '(none: the changes below were never checkpointed)',
     '## Files changed',
     git(appDir, 'diff', '--stat', 'main', tree) || '(none)',
     '## The changes',
@@ -620,13 +620,13 @@ const discard = (appDir) =>
 
 // --- going back to a checkpoint ---------------------------------------------------------------
 
-/** The snapshot data/ was in when she went back, for Bring them back (never a commit's sha). */
+/** The snapshot data/ was in when the user went back, for Bring them back (never a commit's sha). */
 const WENT_BACK_DATA = 'went-back';
 
 /**
  * Goes back to one of the open feature's checkpoints: develop is reset to it (changes not committed, and new files git doesn't
  * ignore, go too), data/ is put back as it was then and the later checkpoints are dropped. What there was before is kept, so
- * bringBack can restore it exactly, until forgetWentBack (her next message). Going back again before then still brings back
+ * bringBack can restore it exactly, until forgetWentBack (the user's next message). Going back again before then still brings back
  * what there was before the first. Returns { to, discarded } (wentBackView); push develop after.
  */
 const goBack = (appDir, sha, now = new Date()) =>
@@ -655,7 +655,7 @@ const goBack = (appDir, sha, now = new Date()) =>
 
 /**
  * Undoes going back: develop, the files (uncommitted ones too), data/ and the checkpoints are as they were before. Refused once
- * her next message has let them go. Returns { checkpoints } (how many there are again); push develop after.
+ * the user's next message has let them go. Returns { checkpoints } (how many there are again); push develop after.
  */
 const bringBack = (appDir) =>
   withLock(appDir, () => {
@@ -676,8 +676,8 @@ const bringBack = (appDir) =>
   });
 
 /**
- * Lets go of what going back left to bring back (the later checkpoints' snapshots and data/ as it was), when her next message is
- * sent. Returns the note for that message's prompt, so Claude knows the later changes are gone, or '' when she hadn't gone back.
+ * Lets go of what going back left to bring back (the later checkpoints' snapshots and data/ as it was), when the user's next message is
+ * sent. Returns the note for that message's prompt, so Claude knows the later changes are gone, or '' when there was no going back.
  */
 const forgetWentBack = (appDir) =>
   withLock(appDir, () => {
@@ -690,12 +690,12 @@ const forgetWentBack = (appDir) =>
     }
     fs.rmSync(files(appDir).wentBack, { force: true });
     const later = discarded.length ? `The ${discarded.length === 1 ? 'change' : `${discarded.length} changes`} after it ${discarded.length === 1 ? 'was' : 'were'} discarded: ${discarded.map((label) => `"${label}"`).join(', ')}.` : 'Changes made after it were discarded.';
-    return `[studio] She went back to the checkpoint "${to.label}": the app's code and data are as they were then. ${later} Don't assume anything from them is still there.`;
+    return `[studio] The user went back to the checkpoint "${to.label}": the app's code and data are as they were then. ${later} Don't assume anything from them is still there.`;
   });
 
 // --- previewing or restoring a version -------------------------------------------------------
 
-/** The snapshot data/ was in when she started previewing (never a commit's sha). */
+/** The snapshot data/ was in when previewing started (never a commit's sha). */
 const PREVIEW_DATA = 'preview';
 
 /** One of the versions kept, by tag, or an error saying there's no such version. */
@@ -732,7 +732,7 @@ const sameCode = (appDir, a, b) => {
 };
 
 /**
- * The app's database migrations (the template's server/migrations.ts). The tables only ever move forward, because they hold her
+ * The app's database migrations (the template's server/migrations.ts). The tables only ever move forward, because they hold the user's
  * data: a version that is previewed or restored gets its own code but the latest version's migrations, so a migration added
  * later is never skipped and old code runs on the newest tables (the template's rules keep migrations additive for that).
  */
@@ -908,7 +908,7 @@ const readMode = (appDir) => {
   return isMode(mode) ? mode : 'build';
 };
 
-/** Sets the chat's switch. A turn under way keeps the mode it started in, so this applies from her next message. */
+/** Sets the chat's switch. A turn under way keeps the mode it started in, so this applies from the user's next message. */
 const setMode = (appDir, mode, now = new Date()) => {
   if (!isMode(mode)) throw new Error('the mode must be ask, plan or build');
   writeJson(files(appDir).mode, { mode, at: now.toISOString() });
@@ -918,7 +918,7 @@ const setMode = (appDir, mode, now = new Date()) => {
 /** The file noting a session's turn: its mode, and where the app was when an Ask or Plan turn started. */
 const turnFile = (appDir, session) => path.join(files(appDir).turns, `${String(session || 'unknown').replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
 
-/** The mode a session's turn runs in: the switch as it was when her message was sent, else as it is now. */
+/** The mode a session's turn runs in: the switch as it was when the user's message was sent, else as it is now. */
 const turnMode = (appDir, session) => {
   const { mode } = readJson(turnFile(appDir, session), {});
   return isMode(mode) ? mode : readMode(appDir);
@@ -955,15 +955,15 @@ const putBack = (appDir, start) =>
 
 /** What Claude is told with each message, in the mode it was sent in. */
 const MODE_RULES = {
-  ask: "[studio] Ask mode: she wants an answer, not a change. Read the app's files and run commands to find out, then explain in plain words in the chat (or, when a page would explain it better, write one outside the app's folder, in your scratchpad, and publish it as an artifact). Don't change the app's files: edits to them are refused in this mode, and anything a command changes in the app's folder is put back when you finish. If she asks for a change, tell her to switch to Build. No Checkpoint: line.",
-  plan: "[studio] Plan mode: she wants a plan, not the change itself yet. Read the app's files and run commands as you need. Before you write the plan, work out what she would see or decide that is still open (how it should look, what happens in an awkward case, what is in or out of this feature). While something is, ask her about it: one question per reply, in plain words, with the answer you recommend so she can just say yes. Never ask her about technical choices: make those yourself. Keep going one question at a time until nothing important is open, usually two to five questions, and none when her request is already clear; if she says to just write the plan, write it. Then write the plan as an HTML page outside the app's folder (in your scratchpad), with <meta name=\"studio-plan\" content=\"<the feature's name: a few plain words>\"> in its <head> (that gives her a Build this button), and publish it as an artifact, with a short summary in the chat. Start the plan with what you agreed, then what she will see when it is built, then the steps. Don't change the app's files: edits to them are refused in this mode, and anything a command changes in the app's folder is put back when you finish. No Checkpoint: line.",
+  ask: "[studio] Ask mode: the user wants an answer, not a change. Read the app's files and run commands to find out, then explain in plain words in the chat (or, when a page would explain it better, write one outside the app's folder, in your scratchpad, and publish it as an artifact). Don't change the app's files: edits to them are refused in this mode, and anything a command changes in the app's folder is put back when you finish. If they ask for a change, tell them to switch to Build. No Checkpoint: line.",
+  plan: "[studio] Plan mode: the user wants a plan, not the change itself yet. Read the app's files and run commands as you need. Before you write the plan, work out what they would see or decide that is still open (how it should look, what happens in an awkward case, what is in or out of this feature). While something is, ask them about it: one question per reply, in plain words, with the answer you recommend so they can just say yes. Never ask them about technical choices: make those yourself. Keep going one question at a time until nothing important is open, usually two to five questions, and none when the request is already clear; if they say to just write the plan, write it. Then write the plan as an HTML page outside the app's folder (in your scratchpad), with <meta name=\"studio-plan\" content=\"<the feature's name: a few plain words>\"> in its <head> (that gives them a Build this button), and publish it as an artifact, with a short summary in the chat. Start the plan with what you agreed, then what they will see when it is built, then the steps. Don't change the app's files: edits to them are refused in this mode, and anything a command changes in the app's folder is put back when you finish. No Checkpoint: line.",
   build: '[studio] Build mode: you can change the app\'s files again. End your reply with a "Checkpoint: <what changed, in plain words>" line.',
 };
 
 /** Why an edit is refused in an Ask or Plan turn, for Claude. */
 const EDIT_REFUSED = {
-  ask: "She has the chat in Ask mode, so the app's files can't be changed now. Answer her without changing them; if it needs a change, tell her to switch to Build.",
-  plan: "She has the chat in Plan mode, so the app's files can't be changed now. Put the change in the plan instead, and publish the plan as an artifact (write its page outside the app's folder, in your scratchpad).",
+  ask: "The chat is in Ask mode, so the app's files can't be changed now. Answer without changing them; if it needs a change, tell the user to switch to Build.",
+  plan: "The chat is in Plan mode, so the app's files can't be changed now. Put the change in the plan instead, and publish the plan as an artifact (write its page outside the app's folder, in your scratchpad).",
 };
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -979,13 +979,14 @@ const appFor = (event, appDir = configuredApp()) => {
 
 /**
  * UserPromptSubmit: notes the prompt, and the mode the turn runs in (the switch as it is now). An Ask or Plan turn notes where the
- * app is, for the Stop hook to put back, and Claude is told the mode's rules. A Build turn with no feature open starts one, named
- * from the prompt (the cockpit asks for a name first, so this only happens for a prompt typed straight into the pane); the first
- * Build turn after an Ask or Plan one tells Claude it may change files again. Returns the text to add to Claude's prompt, if any.
+ * app is, for the Stop hook to put back, and Claude is told the mode's rules. A Plan or Build turn with no feature open starts one,
+ * named from the prompt (the cockpit asks for a name first, so this only happens for a prompt typed straight into the pane): a
+ * feature is planned and built in one conversation. The first Build turn after an Ask or Plan one tells Claude it may change files
+ * again. Returns the text to add to Claude's prompt, if any.
  */
 const onPromptSubmit = (event, appDir = appFor(event)) => {
   if (!appDir || event.agent_id) return '';
-  // Her message lets go of what going back left to bring back, and Claude is told she went back, this once.
+  // The user's message lets go of what going back left to bring back, and Claude is told about going back, this once.
   const wentBack = forgetWentBack(appDir);
   notePrompt(appDir, event.prompt);
   const mode = readMode(appDir);
@@ -993,14 +994,14 @@ const onPromptSubmit = (event, appDir = appFor(event)) => {
   const before = readJson(turn, {}).mode;
   writeJson(turn, { mode, at: new Date().toISOString(), ...(mode === 'build' ? {} : { start: whereNow(appDir) }) });
   const { feature: open, preview } = read(appDir);
-  if (preview) return `[studio] She is previewing ${preview.tag} ("${preview.name}"), an old version of the app, to look at it. Don't change any files: nothing changed now would be kept. If she asks for a change, tell her to click "back to latest" above the app first.`;
+  if (preview) return `[studio] The user is previewing ${preview.tag} ("${preview.name}"), an old version of the app, to look at it. Don't change any files: nothing changed now would be kept. If they ask for a change, tell them to click "back to latest" above the app first.`;
   const notes = (...texts) => texts.filter(Boolean).join('\n\n');
-  if (mode !== 'build') return notes(wentBack, MODE_RULES[mode]);
-  const buildAgain = isMode(before) && before !== 'build' ? MODE_RULES.build : '';
-  if (open) return notes(wentBack, buildAgain);
+  if (mode === 'ask') return notes(wentBack, MODE_RULES.ask);
+  const rules = mode === 'plan' ? MODE_RULES.plan : isMode(before) && before !== 'build' ? MODE_RULES.build : '';
+  if (open) return notes(wentBack, rules);
   const feature = start(appDir, nameFromPrompt(event.prompt));
   pushInBackground(appDir);
-  return notes(`[studio] No feature was open, so a new one was started for this work, called "${feature.name}".`, buildAgain);
+  return notes(`[studio] No feature was open, so a new one was started for this work, called "${feature.name}".`, rules);
 };
 
 /**

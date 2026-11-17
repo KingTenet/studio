@@ -16,7 +16,7 @@ type BuildThisProps = {
 
 /**
  * A plan's [Build this], in the artifact's toolbar. With no feature open it asks for the feature's name (the plan's, to change if
- * she likes), starts it, switches the chat to Build and sends Claude the plan. With one open, the plan is built in it: the chat
+ * the user likes), starts it, switches the chat to Build and sends Claude the plan. With one open, the plan is built in it: the chat
  * switches to Build and Claude is sent the plan. Waits while Claude works or waits on a question, and while an old version is
  * previewed.
  */

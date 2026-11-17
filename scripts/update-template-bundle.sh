@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rebuilds template/app.bundle, the starter app that install.sh creates her app from, out of a template repo:
+# Rebuilds template/app.bundle, the starter app that `studio new` creates each app from, out of a template repo:
 # its main branch and every tag (v1, v2 and their messages), as one git bundle. Run it again whenever the
 # template changes, then commit the new bundle.
 #

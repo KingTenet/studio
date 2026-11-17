@@ -370,10 +370,10 @@ const MODES: { mode: Mode; label: string; tip: string }[] = [
   { mode: 'build', label: 'Build', tip: 'Build: Claude changes the app, and each change is saved as a checkpoint of the feature.' },
 ]
 
-/** The Ask / Plan / Build switch by the message box. What she picks shows at once; the server's mode once it has caught up. */
+/** The Ask / Plan / Build switch by the message box. What the user picks shows at once; the server's mode once it has caught up. */
 const ModeSwitch = ({ mode }: { mode: Mode }) => {
   const tip = useTip()
-  // What she picked, and the server's mode then: shown until the server's mode moves on from that.
+  // What the user picked, and the server's mode then: shown until the server's mode moves on from that.
   const [picked, setPicked] = useState<{ to: Mode; from: Mode } | null>(null)
   const [error, setError] = useState('')
   const shown = picked && picked.from === mode ? picked.to : mode
@@ -437,7 +437,7 @@ type ChatProps = {
   /** The box keeps the keyboard (the cockpit): it takes focus back when asked (FOCUS_CHAT_EVENT), and typing with nothing editable focused goes to it. */
   stickyFocus?: boolean
   /**
-   * A message the cockpit sends for her (a plan's [Build this]), with a new id each time: sent as if she had typed it, without
+   * A message the cockpit sends for the user (a plan's [Build this]), with a new id each time: sent as if they had typed it, without
    * asking for a feature name, since its feature has been started.
    */
   outbox?: { id: number; text: string } | null
@@ -487,7 +487,7 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
   const reconnected = w?.reconnected && w.reconnected.at !== hiddenReconnect ? w.reconnected : null
   // A message on its way: shown faded until the transcript has more messages than when it was sent.
   const [sending, setSending] = useState<{ paneId: string; text: string; count: number } | null>(null)
-  // A message sent with no feature open waits here while she names one; it is sent once the feature has started.
+  // A Plan or Build message sent with no feature open waits here while the user names one; it is sent once the feature has started.
   const [naming, setNaming] = useState<string | null>(null)
   // Files dropped on the chat (a screenshot's thumbnail, anything from Finder): copied to the studio server as they land, since
   // the page can't know where they live, and their copies' paths go with the next message.
@@ -685,7 +685,7 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
       return
     }
     if (!agent) return
-    if (w?.feature === null && w.mode === 'build' && !named) {
+    if (w?.feature === null && (w.mode === 'build' || w.mode === 'plan') && !named) {
       setText(message)
       setNaming(message)
       return
@@ -980,7 +980,7 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
             </div>
           )}
           {w && <ModeSwitch mode={w.mode} />}
-          {naming !== null && <StartFeature hint="Changes are made as part of a feature. Name this one to start it; your message is sent once it has started." autoFocus onStarted={startedFeature} onCancel={() => setNaming(null)} />}
+          {naming !== null && <StartFeature hint="Plans and changes are made as part of a feature. Name this one to start it; your message is sent once it has started." autoFocus onStarted={startedFeature} onCancel={() => setNaming(null)} />}
           <Textarea
             ref={messageBox}
             aria-label="Message the selected session"

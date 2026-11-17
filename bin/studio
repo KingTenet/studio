@@ -15,20 +15,28 @@
 # shell prompt (its command exited, or herdr restored it after a restart) runs its command again. After an
 # update the studio tab is restarted, so the new server code is the one running.
 #
+# `studio new <app> [--collaborator <github user>]` makes a new app in ~/Studio/<app> from template/app.bundle (versions
+# v1 and v2, with develop = main), or clones it if your GitHub account already has a repo by that name (a new Mac), makes it a
+# private GitHub repo with main, develop and the version tags pushed, invites the collaborator, puts an app in
+# ~/Applications that runs it with `studio run` (an error shows as a dialog), and makes it the app the
+# studio works on: with no app yet it writes config.json, otherwise it runs `studio switch <app>`. Run again, it skips
+# what's already done. It needs GitHub logged in (install.sh does that).
+#
 # `studio switch <app>` makes another app the one the studio works on (an app's name in ~/Studio, or its folder):
 # it waits for Claude to finish, points config.json's appDir at it, closes the tabs that run in the old app's
 # folder (reaper, claude, app) and runs `studio up`, which starts them again in the new one. Each app keeps its
 # own open feature, data snapshots and Claude conversation, so switching back carries on where it left off.
 #
 # `studio run [<app>]` runs the app for real, apart from the studio (default: the app config.json names). It runs
-# the newest version she kept (vN), from its own copy in ~/Studio/.live/<app>/code (a git worktree, detached at the
+# the newest version kept (vN), from its own copy in ~/Studio/.live/<app>/code (a git worktree, detached at the
 # tag), on its own data in ~/Studio/.live/<app>/data, which nothing in the studio ever rewinds, at
 # http://localhost:5001, in the background (its output in ~/Studio/.live/<app>/app.log). Run again, it opens the
-# browser, and when she has kept a newer version since, moves to it first: it stops the running one, copies the
-# database to ~/Studio/.live/<app>/backups/ and checks out the new tag, whose migrations then run on her data.
-# It only ever moves forward. install.sh puts an app in ~/Applications that runs it, so she needn't use a terminal.
+# browser, and when a newer version has been kept since, moves to it first: it stops the running one, copies the
+# database to ~/Studio/.live/<app>/backups/ and checks out the new tag, whose migrations then run on its data.
+# It only ever moves forward. `studio new` puts an app in ~/Applications that runs it, so no terminal is needed.
 #
 # Usage: studio up [--dry-run]   # --dry-run prints what each tab would run and changes nothing
+#        studio new <app> [--collaborator <github user>]
 #        studio switch <app>
 #        studio run [<app>]
 #
@@ -48,11 +56,12 @@ WHISPER_MODEL="${STUDIO_WHISPER_MODEL:-$HOME/.whisper/ggml-small.en.bin}"
 WORKSPACE="${STUDIO_WORKSPACE:-studio}"
 CONFIG="$STUDIO_HOME/config.json"
 
-usage() { echo "usage: studio up [--dry-run]   or   studio switch <app>   or   studio run [<app>]" >&2; exit 2; }
+usage() { echo "usage: studio up [--dry-run]   or   studio new <app> [--collaborator <github user>]   or   studio switch <app>   or   studio run [<app>]" >&2; exit 2; }
 DRY_RUN=false
 case "${1:-} ${2:-}" in
   "up ") ;;
   "up --dry-run") DRY_RUN=true ;;
+  new\ ?*) ;;
   switch\ ?*) [ $# -eq 2 ] || usage ;;
   run\ *) [ $# -le 2 ] || usage ;;
   *) usage ;;
@@ -74,6 +83,90 @@ app_folder() {
   fi
   (cd "$dir" && pwd -P)
 }
+
+# --- studio new -----------------------------------------------------------------------------------
+
+if [ "$1" = new ]; then
+  shift
+  name="" collaborator=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --collaborator) [ $# -ge 2 ] || usage; collaborator=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$name" ] || usage; name=$1; shift ;;
+    esac
+  done
+  case "$name" in
+    ""|*[!a-z0-9-]*|-*) echo "The app's name can only have lowercase letters, numbers and dashes, like my-app." >&2; exit 2 ;;
+  esac
+  gh auth status >/dev/null 2>&1 || { echo "GitHub isn't logged in. Run ./install.sh in $STUDIO_DIR first." >&2; exit 1; }
+  owner=$(gh api user --jq .login)
+  repo="$owner/$name"
+  dir="$HOME/Studio/$name"
+  repo_url() { local url; url=$(gh repo view "$repo" --json url --jq .url); [ -n "$url" ] || { echo "GitHub didn't say where $repo is." >&2; exit 1; }; echo "$url.git"; }
+
+  repo_exists=false
+  gh repo view "$repo" >/dev/null 2>&1 && repo_exists=true
+  if [ -d "$dir" ]; then
+    echo "$dir is already there (left as it is)."
+  elif [ "$repo_exists" = true ]; then
+    echo "$repo is already on GitHub, so it's copied from there."
+    mkdir -p "$(dirname "$dir")"
+    url=$(repo_url)
+    git clone --quiet "$url" "$dir"
+    git -C "$dir" branch --quiet develop origin/develop 2>/dev/null || git -C "$dir" branch --quiet develop main
+  else
+    mkdir -p "$(dirname "$dir")"
+    git clone --quiet --branch main "$STUDIO_DIR/template/app.bundle" "$dir"
+    git -C "$dir" remote remove origin
+    git -C "$dir" branch --quiet develop main
+    echo "Made $name in $dir, with versions $(git -C "$dir" tag --list 'v*' | paste -sd ' ' -)."
+  fi
+
+  [ "$repo_exists" = true ] || gh repo create "$name" --private --description "Built with Studio" >/dev/null
+  if ! git -C "$dir" remote get-url origin >/dev/null 2>&1; then
+    url=$(repo_url)
+    git -C "$dir" remote add origin "$url"
+  fi
+  # Only branches GitHub doesn't have yet: after that the studio pushes every change itself.
+  for branch in main develop; do
+    git -C "$dir" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1 ||
+      git -C "$dir" push --quiet --follow-tags origin "$branch"
+  done
+  echo "It's on GitHub, private, as $repo."
+
+  if [ -n "$collaborator" ] && [ "$collaborator" != "$owner" ]; then
+    gh api --method PUT "repos/$repo/collaborators/$collaborator" -f permission=push >/dev/null
+    echo "$collaborator is invited to $repo (they accept the invitation on GitHub)."
+  fi
+
+  # A double-click runs `studio run` (the newest kept version, on its real data); an error shows as a dialog.
+  launcher="$HOME/Applications/$name.app"
+  if [ ! -d "$launcher" ] && command -v osacompile >/dev/null; then
+    mkdir -p "$HOME/Applications"
+    osacompile -o "$launcher" \
+      -e 'try' \
+      -e "do shell script \"export PATH=$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:\$PATH; studio run $name\"" \
+      -e 'on error message' \
+      -e "display dialog message buttons {\"OK\"} default button 1 with title \"$name\"" \
+      -e 'end try'
+    echo "$launcher runs $name for real: drag it into the Dock to open it with one click."
+  fi
+
+  current="$(config .appDir)"
+  if [ -z "$current" ]; then
+    mkdir -p "$STUDIO_HOME"
+    [ -f "$CONFIG" ] || echo '{}' >"$CONFIG"
+    jq --arg dir "$dir" --arg name "$name" '.appDir = $dir | .name = $name | .appPort //= 4001' "$CONFIG" >"$CONFIG.tmp"
+    mv "$CONFIG.tmp" "$CONFIG"
+    echo "The studio works on $name. To start it: studio up"
+  elif [ "$(cd "$current" 2>/dev/null && pwd -P)" = "$(cd "$dir" && pwd -P)" ]; then
+    echo "The studio already works on $name."
+  else
+    exec "$0" switch "$name"
+  fi
+  exit 0
+fi
 
 # --- studio switch --------------------------------------------------------------------------------
 
@@ -161,7 +254,7 @@ if [ "$1" = run ]; then
     git -C "$app" worktree add --quiet --detach "$CODE" "$tag"
   else
     current=$(git -C "$CODE" describe --tags --exact-match --match 'v*' 2>/dev/null || echo v0)
-    # Only ever forward: her data has had this version's migrations, which an older one doesn't know.
+    # Only ever forward: the data has had this version's migrations, which an older one doesn't know.
     if [ "${current#v}" -lt "${tag#v}" ]; then
       stop
       if [ -f "$LIVE/data/app.db" ]; then
@@ -181,7 +274,7 @@ if [ "$1" = run ]; then
       echo "Something else is using port $PORT, so $name can't start." >&2
       exit 1
     fi
-    # Her secrets, from the app's own .env.
+    # The app's secrets, from its own .env.
     [ -f "$app/.env" ] && ln -sfn "$app/.env" "$CODE/.env"
     lock=$(git -C "$CODE" rev-parse -q --verify HEAD:package-lock.json || echo none)
     if [ ! -d "$CODE/node_modules" ] || [ "$(cat "$LIVE/installed" 2>/dev/null)" != "$lock" ]; then
@@ -216,7 +309,7 @@ APP_DIR="${APP_DIR:-$HOME/Studio/my-app}"
 APP_PORT="$(config .appPort)"
 APP_PORT="${APP_PORT:-4001}"
 if [ ! -d "$APP_DIR" ]; then
-  echo "There's no app at $APP_DIR. Set appDir in $CONFIG to its folder." >&2
+  echo "There's no app at $APP_DIR. Make one with: studio new <name>" >&2
   exit 1
 fi
 

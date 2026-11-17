@@ -104,7 +104,7 @@ const Layout = ({ selected, setSelected, adopt, focusMessage }: LayoutProps) => 
   })
 
   // The middle pane switches by itself on two events only: to Artifacts when the chat's Claude publishes (a plan or an explainer),
-  // and back to the app when a Build turn ends. A drawing she hasn't sent keeps her where she is (lib/plan.ts).
+  // and back to the app when a Build turn ends. An unsent drawing keeps the pane where it is (lib/plan.ts).
   const middle = () => ({ source, drawInk: ink.attached, artifactInk: artifactInk.attached })
   const onPublished = (artifact: ArtifactInfo) => {
     const fromChat = !w?.agents?.some((agent) => agent.tab === 'Artifacts' && agent.sessionId === artifact.latest.sessionId)

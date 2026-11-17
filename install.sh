@@ -1,22 +1,21 @@
 #!/usr/bin/env bash
-# The studio's one-time setup on a Mac, run from a checkout of this repo (next to where her app will go, e.g.
-# ~/Studio/studio). It installs what the studio needs, logs into GitHub and Claude with her own accounts,
-# creates her app from template/app.bundle (with versions v1 and v2) in ~/Studio/<app>, makes it a private
-# GitHub repo with main, develop and the version tags pushed, adds a collaborator, writes ~/.studio/config.json,
-# puts `studio` on her PATH and builds the cockpit.
+# The studio's one-time setup on a Mac, run from a checkout of this repo (next to where your apps will go, e.g.
+# ~/Studio/studio). It installs what the studio needs, logs into GitHub and Claude with your accounts,
+# puts `studio` on your PATH and builds the cockpit. With --app it then makes that app with `studio new` (see
+# bin/studio); without it, make one later with `studio new <name>`.
 #
-# Running it again is safe: every step that's already done is skipped, and her app and config.json are never
-# written over. If her app's GitHub repo already exists (a new Mac), the app is cloned from there instead.
+# Running it again is safe: every step that's already done is skipped, and your apps and config.json are never
+# written over.
 #
-# Usage: ./install.sh [--app <name>] [--collaborator <github user>]
-#   --app           the app's name: its folder in ~/Studio and its GitHub repo (default my-app)
-#   --collaborator  a GitHub user to add to her app's repo, so they can help (they get an invitation)
+# Usage: ./install.sh [--app <name> [--collaborator <github user>]]
+#   --app           an app to make: its folder in ~/Studio and its GitHub repo
+#   --collaborator  a GitHub user to add to that app's repo, so they can help (they get an invitation)
 #
 # Environment: STUDIO_HOME (default ~/.studio), STUDIO_WHISPER_MODEL (default ~/.whisper/ggml-small.en.bin),
 # STUDIO_WHISPER_MODEL_URL (where the model is downloaded from).
 set -Eeuo pipefail
 
-APP_NAME=my-app
+APP_NAME=""
 COLLABORATOR=""
 usage() { echo "usage: ./install.sh [--app <name>] [--collaborator <github user>]" >&2; exit 2; }
 while [ $# -gt 0 ]; do
@@ -26,14 +25,13 @@ while [ $# -gt 0 ]; do
     *) usage ;;
   esac
 done
+[ -z "$COLLABORATOR" ] || [ -n "$APP_NAME" ] || { echo "--collaborator is added to an app's repo, so it needs --app too." >&2; exit 2; }
 case "$APP_NAME" in
-  ""|*[!a-z0-9-]*|-*) echo "The app's name can only have lowercase letters, numbers and dashes, like my-app." >&2; exit 2 ;;
+  *[!a-z0-9-]*|-*) echo "The app's name can only have lowercase letters, numbers and dashes, like my-app." >&2; exit 2 ;;
 esac
 
 STUDIO_DIR="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
 STUDIO_HOME="${STUDIO_HOME:-$HOME/.studio}"
-APP_DIR="$HOME/Studio/$APP_NAME"
-BUNDLE="$STUDIO_DIR/template/app.bundle"
 WHISPER_MODEL="${STUDIO_WHISPER_MODEL:-$HOME/.whisper/ggml-small.en.bin}"
 WHISPER_MODEL_URL="${STUDIO_WHISPER_MODEL_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin}"
 CLAUDE_INSTALL_URL="${STUDIO_CLAUDE_INSTALL_URL:-https://claude.ai/install.sh}"
@@ -74,7 +72,7 @@ install_claude() {
 
 node_ok() { command -v node >/dev/null && node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 23 || (a === 23 && b >= 8) || (a === 22 && b >= 16) ? 0 : 1)'; }
 
-echo "Setting up Studio (from $STUDIO_DIR) for the app \"$APP_NAME\"."
+echo "Setting up Studio (from $STUDIO_DIR)."
 
 # --- tools ----------------------------------------------------------------------------------------
 
@@ -136,7 +134,7 @@ fi
 
 # --- accounts -------------------------------------------------------------------------------------
 
-step "Logging into GitHub (her own account)"
+step "Logging into GitHub (your account)"
 if gh auth status >/dev/null 2>&1; then
   ok "already logged in"
 else
@@ -147,11 +145,11 @@ gh auth setup-git
 OWNER=$(gh api user --jq .login)
 ok "logged in as $OWNER"
 
-step "Logging into Claude (her own account)"
+step "Logging into Claude (your account)"
 if claude auth status --json 2>/dev/null | jq -e '.loggedIn == true' >/dev/null; then
   ok "already logged in"
 else
-  echo "    A browser page opens: log in there with her Claude account."
+  echo "    A browser page opens: log in there with your Claude account."
   claude auth login --claudeai
 fi
 
@@ -163,81 +161,19 @@ else
   herdr integration install claude
 fi
 
-step "Her name on the app's history"
+step "Your name on the app's history"
 for key in user.name user.email; do
   if [ -n "$(git config --global "$key" || true)" ]; then
     ok "$key is $(git config --global "$key")"
   else
-    [ "$key" = user.name ] && prompt="Her name: " || prompt="Her email: "
+    [ "$key" = user.name ] && prompt="Your name: " || prompt="Your email: "
     value=""
     while [ -z "$value" ]; do read -r -p "    $prompt" value || die "No answer given."; done
     git config --global "$key" "$value"
   fi
 done
 
-# --- her app --------------------------------------------------------------------------------------
-
-REPO="$OWNER/$APP_NAME"
-repo_url() { local url; url=$(gh repo view "$REPO" --json url --jq .url); [ -n "$url" ] || die "GitHub didn't say where $REPO is."; echo "$url.git"; }
-step "Her app, in $APP_DIR"
-repo_exists=false
-gh repo view "$REPO" >/dev/null 2>&1 && repo_exists=true
-if [ -d "$APP_DIR" ]; then
-  ok "already there (left as it is)"
-elif [ "$repo_exists" = true ]; then
-  echo "    $REPO is already on GitHub, so it's copied from there."
-  mkdir -p "$(dirname "$APP_DIR")"
-  url=$(repo_url)
-  git clone --quiet "$url" "$APP_DIR"
-  git -C "$APP_DIR" branch --quiet develop origin/develop 2>/dev/null || git -C "$APP_DIR" branch --quiet develop main
-else
-  mkdir -p "$(dirname "$APP_DIR")"
-  git clone --quiet --branch main "$BUNDLE" "$APP_DIR"
-  git -C "$APP_DIR" remote remove origin
-  git -C "$APP_DIR" branch --quiet develop main
-  ok "created from the template, with versions $(git -C "$APP_DIR" tag --list 'v*' | paste -sd ' ' -)"
-fi
-
-step "Her app's private GitHub repo, $REPO"
-if [ "$repo_exists" = true ]; then
-  ok "already on GitHub"
-else
-  gh repo create "$APP_NAME" --private --description "Built with Studio" >/dev/null
-fi
-if git -C "$APP_DIR" remote get-url origin >/dev/null 2>&1; then
-  ok "the app's origin is $(git -C "$APP_DIR" remote get-url origin)"
-else
-  url=$(repo_url)
-  git -C "$APP_DIR" remote add origin "$url"
-fi
-# Only branches GitHub doesn't have yet: after that the studio pushes every change itself.
-for branch in main develop; do
-  if git -C "$APP_DIR" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
-    ok "$branch is on GitHub"
-  else
-    git -C "$APP_DIR" push --quiet --follow-tags origin "$branch"
-    ok "pushed $branch"
-  fi
-done
-
-if [ -n "$COLLABORATOR" ] && [ "$COLLABORATOR" != "$OWNER" ]; then
-  step "Adding $COLLABORATOR to $REPO, so they can help"
-  gh api --method PUT "repos/$REPO/collaborators/$COLLABORATOR" -f permission=push >/dev/null
-  ok "invited (they accept the invitation on GitHub)"
-fi
-
 # --- the studio -----------------------------------------------------------------------------------
-
-step "The studio's settings, $STUDIO_HOME/config.json"
-if [ -f "$STUDIO_HOME/config.json" ]; then
-  configured=$(jq -r '.appDir // "not set"' "$STUDIO_HOME/config.json")
-  ok "already there (left as it is): appDir is $configured"
-  [ "$configured" = "$APP_DIR" ] || echo "    To work on $APP_NAME instead, run: studio switch $APP_NAME"
-else
-  mkdir -p "$STUDIO_HOME"
-  jq -n --arg dir "$APP_DIR" --arg name "$APP_NAME" '{ appDir: $dir, name: $name, appPort: 4001 }' >"$STUDIO_HOME/config.json"
-  ok "written"
-fi
 
 step "The studio command"
 mkdir -p "$BIN_DIR"
@@ -245,31 +181,19 @@ ln -sfn "$STUDIO_DIR/bin/studio" "$BIN_DIR/studio"
 add_to_zprofile 'export PATH="$HOME/.local/bin:$PATH"'
 ok "$BIN_DIR/studio → $STUDIO_DIR/bin/studio"
 
-# A double-click runs `studio run` (the newest kept version, on her real data); an error shows as a dialog.
-LAUNCHER="$HOME/Applications/$APP_NAME.app"
-step "An app that opens $APP_NAME for real, $LAUNCHER"
-if [ -d "$LAUNCHER" ]; then
-  ok "already there"
-elif ! command -v osacompile >/dev/null; then
-  ok "skipped: this Mac has no osacompile"
-else
-  mkdir -p "$HOME/Applications"
-  osacompile -o "$LAUNCHER" \
-    -e 'try' \
-    -e "do shell script \"export PATH=$BIN_DIR:/opt/homebrew/bin:/usr/local/bin:\$PATH; studio run $APP_NAME\"" \
-    -e 'on error message' \
-    -e "display dialog message buttons {\"OK\"} default button 1 with title \"$APP_NAME\"" \
-    -e 'end try'
-  ok "made: drag it into the Dock to open $APP_NAME with one click"
-fi
-
 step "Building the cockpit page"
 pnpm --dir "$STUDIO_DIR/web" install --frozen-lockfile --silent
 pnpm --dir "$STUDIO_DIR/web" --silent build >/dev/null
 ok "built"
 
+if [ -n "$APP_NAME" ]; then
+  step "Your app, $APP_NAME"
+  "$STUDIO_DIR/bin/studio" new "$APP_NAME" ${COLLABORATOR:+--collaborator "$COLLABORATOR"}
+fi
+
 trap - ERR
-cat <<EOF
+if [ -n "$APP_NAME" ]; then
+  cat <<EOF
 
 All set. To start the studio, open a new Terminal window and type:
 
@@ -280,3 +204,15 @@ The studio opens in the browser at http://localhost:4000.
 To use $APP_NAME for real, on its own data, open $APP_NAME in ~/Applications (or put it in the Dock).
 It runs the newest version you kept.
 EOF
+else
+  cat <<EOF
+
+All set. To make an app and start the studio, open a new Terminal window and type:
+
+    studio new <name>
+    studio up
+
+The name can have lowercase letters, numbers and dashes, like my-app. The studio opens in the browser at
+http://localhost:4000.
+EOF
+fi

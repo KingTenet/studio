@@ -77,11 +77,11 @@ const featureAction = async <T>(path: string, body: unknown, failed: string): Pr
 }
 /** Keep's first step: runs the app's tests and type check and writes the feature's summary (slow: tens of seconds). */
 export const checkFeature = () => featureAction<FeatureCheck>('/feature/check', {}, 'The tests could not be run.')
-/** Keeps the feature as the next version, with the summary she saw; `anyway` keeps it although its tests fail. */
+/** Keeps the feature as the next version, with the summary the user saw; `anyway` keeps it although its tests fail. */
 export const keepFeature = (summary: string, anyway: boolean) => featureAction<{ version: string; sha: string; summary: string }>('/feature/keep', { summary, anyway }, 'The feature could not be kept.')
 /** Throws the feature away: the code back to the latest version, the data back to how it was when the feature started. */
 export const discardFeature = () => featureAction<{ name: string; checkpoints: number }>('/feature/discard', {}, 'The feature could not be discarded.')
-/** Goes back to a checkpoint: the code and data as they were then, the later checkpoints dropped (until her next message). */
+/** Goes back to a checkpoint: the code and data as they were then, the later checkpoints dropped (until the next message). */
 export const goBackTo = (sha: string) => featureAction<WentBack>('/feature/go-back', { sha }, 'The app could not go back to that checkpoint.')
 /** Brings back the checkpoints going back dropped, and the code and data as they were. */
 export const bringBack = () => featureAction<{ checkpoints: number }>('/feature/bring-back', {}, 'They could not be brought back.')
@@ -91,7 +91,7 @@ export const previewVersion = (tag: string) => featureAction<Preview>('/version/
 export const endPreview = () => featureAction<{ tag: string }>('/version/end-preview', {}, 'The app could not go back to the latest version.')
 /** Restores an old version as a new one: its code, on top of the latest, tagged as the next version. */
 export const restoreVersion = (tag: string) => featureAction<{ version: string; sha: string; restored: string }>('/version/restore', { tag }, 'That version could not be restored.')
-/** Sets the chat's Ask / Plan / Build switch, from her next message on (and Claude's effort for it). */
+/** Sets the chat's Ask / Plan / Build switch, from the next message on (and Claude's effort for it). */
 export const setMode = (mode: Mode) => featureAction<{ mode: Mode }>('/mode', { mode }, 'The mode could not be changed.')
 export const setTooltips = (tooltips: boolean) => post('/prefs', { tooltips })
 /** The last 50 lines of the app's dev server output (data/logs/dev.log), '' when there are none or the server isn't answering. */
