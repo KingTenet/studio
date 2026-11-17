@@ -201,11 +201,11 @@ test('without --app it sets up the Mac but makes no app, and `studio new` makes 
   assert.match(again.stdout, /already works on my-app/);
 });
 
-test('`studio new` before GitHub is logged in says to run the installer', () => {
+test('`studio new` before the installer has run says to run it', () => {
   const { env } = setup();
   const run = spawnSync(path.join(STUDIO_DIR, 'bin', 'studio'), ['new', 'my-app'], { env, encoding: 'utf8' });
   assert.equal(run.status, 1);
-  assert.match(run.stderr, /GitHub isn't logged in\. Run \.\/install\.sh/);
+  assert.match(run.stderr, /^Studio can't find gh, GitHub's command\. Run \.\/install\.sh/m);
 });
 
 test('--collaborator without --app is refused', () => {
