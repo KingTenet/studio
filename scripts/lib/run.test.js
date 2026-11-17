@@ -151,3 +151,18 @@ test('studio run says when something else holds its port, and starts nothing', a
   assert.match(result.stderr, new RegExp(`Something else is using port ${s.port}, so my-app can't start`));
   assert.ok(!fs.existsSync(path.join(s.live, 'app.pid')));
 });
+
+test('a step that fails says which, instead of studio stopping without a word', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'studio-fails-')));
+  try {
+    const bin = path.join(root, 'bin');
+    fs.mkdirSync(bin);
+    // Logged in, but asking who it is fails and says nothing.
+    fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\n[ "$1 $2" = "auth status" ] && exit 0\nexit 1\n', { mode: 0o755 });
+    const result = spawnSync(STUDIO, ['new', 'test-app'], { encoding: 'utf8', env: { ...process.env, HOME: root, PATH: `${bin}:/usr/bin:/bin`, STUDIO_HOME: path.join(root, '.studio') } });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /studio stopped: this failed \(line \d+ of .*studio\): owner=\$\(gh api user --jq \.login\)/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

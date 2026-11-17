@@ -122,6 +122,8 @@ test('install.sh sets everything up once, and a second run changes nothing', () 
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dirs.home, '.studio', 'config.json'), 'utf8')), { appDir: app, name: 'my-app', appPort: 4001 });
   assert.equal(fs.realpathSync(path.join(dirs.home, '.local', 'bin', 'studio')), path.join(STUDIO_DIR, 'bin', 'studio'));
   assert.match(fs.readFileSync(path.join(dirs.home, '.zprofile'), 'utf8'), /export PATH="\$HOME\/\.local\/bin:\$PATH"/);
+  // Homebrew was there already, and new Terminal windows still find what it installs.
+  assert.match(fs.readFileSync(path.join(dirs.home, '.zprofile'), 'utf8'), /^eval "\$\(.*\/brew shellenv\)"$/m);
   assert.match(log(), /^pnpm --dir .*\/web install --frozen-lockfile --silent$/m);
   assert.match(log(), /^pnpm --dir .*\/web --silent build$/m);
   const upEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('STUDIO_')));

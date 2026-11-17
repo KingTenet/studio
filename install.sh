@@ -31,6 +31,8 @@ case "$APP_NAME" in
 esac
 
 STUDIO_DIR="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
+# pnpm can come from Corepack, which otherwise stops to ask before downloading it.
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 STUDIO_HOME="${STUDIO_HOME:-$HOME/.studio}"
 WHISPER_MODEL="${STUDIO_WHISPER_MODEL:-$HOME/.whisper/ggml-small.en.bin}"
 WHISPER_MODEL_URL="${STUDIO_WHISPER_MODEL_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin}"
@@ -88,10 +90,13 @@ else
   echo "    It asks for this Mac's password (nothing shows as you type)."
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
-    [ -x "$b" ] && eval "$("$b" shellenv)" && add_to_zprofile "eval \"\$($b shellenv)\"" && break
+    [ -x "$b" ] && eval "$("$b" shellenv)" && break
   done
   command -v brew >/dev/null || die "Homebrew didn't install."
 fi
+# New Terminal windows find what Homebrew installs (herdr, gh, node…) too, also when Homebrew was there already, as it
+# is for a second account on a Mac.
+add_to_zprofile "eval \"\$($(command -v brew) shellenv)\""
 
 step "The tools the studio uses"
 # Each formula, and the command that shows it's there.

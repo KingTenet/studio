@@ -47,8 +47,13 @@
 # STUDIO_LIVE_PORT (where `studio run` serves the app, default 5001; not 5000, which AirPlay Receiver holds).
 set -euo pipefail
 
+# A step that fails says which, instead of studio stopping without a word.
+trap 'echo "✗ studio stopped: this failed (line $LINENO of $0): $BASH_COMMAND" >&2' ERR
+
 STUDIO_DIR="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
 export STUDIO_DIR
+# pnpm can come from Corepack, which otherwise stops to ask before downloading it.
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 export STUDIO_HOME="${STUDIO_HOME:-$HOME/.studio}"
 export STUDIO_PORT="${STUDIO_PORT:-4000}"
 export STUDIO_WHISPER_PORT="${STUDIO_WHISPER_PORT:-8178}"
