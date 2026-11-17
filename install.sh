@@ -245,6 +245,24 @@ ln -sfn "$STUDIO_DIR/bin/studio" "$BIN_DIR/studio"
 add_to_zprofile 'export PATH="$HOME/.local/bin:$PATH"'
 ok "$BIN_DIR/studio → $STUDIO_DIR/bin/studio"
 
+# A double-click runs `studio run` (the newest kept version, on her real data); an error shows as a dialog.
+LAUNCHER="$HOME/Applications/$APP_NAME.app"
+step "An app that opens $APP_NAME for real, $LAUNCHER"
+if [ -d "$LAUNCHER" ]; then
+  ok "already there"
+elif ! command -v osacompile >/dev/null; then
+  ok "skipped: this Mac has no osacompile"
+else
+  mkdir -p "$HOME/Applications"
+  osacompile -o "$LAUNCHER" \
+    -e 'try' \
+    -e "do shell script \"export PATH=$BIN_DIR:/opt/homebrew/bin:/usr/local/bin:\$PATH; studio run $APP_NAME\"" \
+    -e 'on error message' \
+    -e "display dialog message buttons {\"OK\"} default button 1 with title \"$APP_NAME\"" \
+    -e 'end try'
+  ok "made: drag it into the Dock to open $APP_NAME with one click"
+fi
+
 step "Building the cockpit page"
 pnpm --dir "$STUDIO_DIR/web" install --frozen-lockfile --silent
 pnpm --dir "$STUDIO_DIR/web" --silent build >/dev/null
@@ -258,4 +276,7 @@ All set. To start the studio, open a new Terminal window and type:
     studio up
 
 The studio opens in the browser at http://localhost:4000.
+
+To use $APP_NAME for real, on its own data, open $APP_NAME in ~/Applications (or put it in the Dock).
+It runs the newest version you kept.
 EOF

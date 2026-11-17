@@ -129,6 +129,12 @@ test('install.sh sets everything up once, and a second run changes nothing', () 
   assert.match(up, new RegExp(`app \\(in ${app}\\)`));
   assert.match(up, new RegExp(`whisper-server -m '${dirs.home}/\\.whisper/ggml-small\\.en\\.bin'`));
 
+  // An app to double-click, which runs `studio run my-app` with the studio and Homebrew on its PATH.
+  const launcher = path.join(dirs.home, 'Applications', 'my-app.app');
+  const script = execFileSync('osadecompile', [launcher], { encoding: 'utf8' });
+  assert.match(script, new RegExp(`do shell script "export PATH=${dirs.home}/\\.local/bin:/opt/homebrew/bin:/usr/local/bin:\\$PATH; studio run my-app"`));
+  assert.match(script, /display dialog message/);
+
   // Her own changes since, which a second run must leave alone.
   fs.writeFileSync(path.join(dirs.home, '.studio', 'config.json'), JSON.stringify({ appDir: app, name: 'Her App', appPort: 4001 }));
   fs.writeFileSync(path.join(app, 'notes.txt'), 'work in progress');

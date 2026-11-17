@@ -20,13 +20,23 @@
 # folder (reaper, claude, app) and runs `studio up`, which starts them again in the new one. Each app keeps its
 # own open feature, data snapshots and Claude conversation, so switching back carries on where it left off.
 #
+# `studio run [<app>]` runs the app for real, apart from the studio (default: the app config.json names). It runs
+# the newest version she kept (vN), from its own copy in ~/Studio/.live/<app>/code (a git worktree, detached at the
+# tag), on its own data in ~/Studio/.live/<app>/data, which nothing in the studio ever rewinds, at
+# http://localhost:4100, in the background (its output in ~/Studio/.live/<app>/app.log). Run again, it opens the
+# browser, and when she has kept a newer version since, moves to it first: it stops the running one, copies the
+# database to ~/Studio/.live/<app>/backups/ and checks out the new tag, whose migrations then run on her data.
+# It only ever moves forward. install.sh puts an app in ~/Applications that runs it, so she needn't use a terminal.
+#
 # Usage: studio up [--dry-run]   # --dry-run prints what each tab would run and changes nothing
 #        studio switch <app>
+#        studio run [<app>]
 #
 # Environment: STUDIO_HOME (default ~/.studio, holding config.json with the app's appDir and appPort),
 # STUDIO_PORT (the cockpit's port, default 4000), STUDIO_WHISPER_PORT (whisper-server's port, default 8178),
 # STUDIO_WHISPER_MODEL (its model, default ~/.whisper/ggml-small.en.bin), STUDIO_WORKSPACE (the workspace's label, default studio),
-# STUDIO_CLAUDE_CMD (run in place of claude, for trying this out), STUDIO_NO_OPEN=1 (don't open the browser).
+# STUDIO_CLAUDE_CMD (run in place of claude, for trying this out), STUDIO_NO_OPEN=1 (don't open the browser),
+# STUDIO_LIVE_PORT (where `studio run` serves the app, default 4100).
 set -euo pipefail
 
 STUDIO_DIR="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
@@ -38,30 +48,37 @@ WHISPER_MODEL="${STUDIO_WHISPER_MODEL:-$HOME/.whisper/ggml-small.en.bin}"
 WORKSPACE="${STUDIO_WORKSPACE:-studio}"
 CONFIG="$STUDIO_HOME/config.json"
 
-usage() { echo "usage: studio up [--dry-run]   or   studio switch <app>" >&2; exit 2; }
+usage() { echo "usage: studio up [--dry-run]   or   studio switch <app>   or   studio run [<app>]" >&2; exit 2; }
 DRY_RUN=false
 case "${1:-} ${2:-}" in
   "up ") ;;
   "up --dry-run") DRY_RUN=true ;;
   switch\ ?*) [ $# -eq 2 ] || usage ;;
+  run\ *) [ $# -le 2 ] || usage ;;
   *) usage ;;
 esac
 
 q() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
 config() { [ -f "$CONFIG" ] && jq -r "$1 // empty" "$CONFIG" || true; }
 
+# An app's folder, from its name in ~/Studio or its folder.
+app_folder() {
+  local dir
+  case "$1" in
+    */*) dir="$1" ;;
+    *) dir="$HOME/Studio/$1" ;;
+  esac
+  if [ ! -d "$dir/.git" ]; then
+    echo "There's no app at $dir. Its name is its folder in ~/Studio: $(ls "$HOME/Studio" 2>/dev/null | paste -sd ' ' - || true)" >&2
+    return 1
+  fi
+  (cd "$dir" && pwd -P)
+}
+
 # --- studio switch --------------------------------------------------------------------------------
 
 if [ "$1" = switch ]; then
-  case "$2" in
-    */*) target="$2" ;;
-    *) target="$HOME/Studio/$2" ;;
-  esac
-  if [ ! -d "$target/.git" ]; then
-    echo "There's no app at $target. Its name is its folder in ~/Studio: $(ls "$HOME/Studio" 2>/dev/null | paste -sd ' ' - || true)" >&2
-    exit 1
-  fi
-  target="$(cd "$target" && pwd -P)"
+  target="$(app_folder "$2")" || exit 1
   current="$(config .appDir)"
   if [ -n "$current" ] && [ "$(cd "$current" 2>/dev/null && pwd -P)" = "$target" ]; then
     echo "The studio is already working on $(basename "$target")."
@@ -107,6 +124,91 @@ if [ "$1" = switch ]; then
   fi
   echo "The studio now works on $(basename "$target")."
   exec "$0" up
+fi
+
+# --- studio run -----------------------------------------------------------------------------------
+
+if [ "$1" = run ]; then
+  if [ -n "${2:-}" ]; then
+    app="$(app_folder "$2")" || exit 1
+  else
+    app="$(config .appDir)"
+    app="$(app_folder "${app:-$HOME/Studio/my-app}")" || exit 1
+  fi
+  name="$(basename "$app")"
+  LIVE="$HOME/Studio/.live/$name"
+  CODE="$LIVE/code"
+  PORT="${STUDIO_LIVE_PORT:-4100}"
+  URL="http://localhost:$PORT"
+  tag=$(git -C "$app" tag --list 'v*' --sort=-v:refname | head -n1)
+  [ -n "$tag" ] || { echo "$name has no versions yet. Keep a feature first." >&2; exit 1; }
+
+  running() { [ -f "$LIVE/app.pid" ] && kill -0 "$(cat "$LIVE/app.pid")" 2>/dev/null; }
+  listener() { lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | head -n1; }
+  stop() {
+    running || return 0
+    kill "$(cat "$LIVE/app.pid")" 2>/dev/null || true
+    for _ in $(seq 1 40); do
+      running || break
+      sleep 0.25
+    done
+    rm -f "$LIVE/app.pid"
+  }
+
+  mkdir -p "$LIVE/data" "$LIVE/backups"
+  if [ ! -e "$CODE/.git" ]; then
+    git -C "$app" worktree prune
+    git -C "$app" worktree add --quiet --detach "$CODE" "$tag"
+  else
+    current=$(git -C "$CODE" describe --tags --exact-match --match 'v*' 2>/dev/null || echo v0)
+    # Only ever forward: her data has had this version's migrations, which an older one doesn't know.
+    if [ "${current#v}" -lt "${tag#v}" ]; then
+      stop
+      if [ -f "$LIVE/data/app.db" ]; then
+        cp "$LIVE/data/app.db" "$LIVE/backups/app-$current-$(date +%Y%m%d-%H%M%S).db"
+        # The newest 20 are enough.
+        ls -t "$LIVE/backups"/app-*.db | tail -n +21 | while read -r old; do rm -f "$old"; done
+      fi
+      git -C "$CODE" checkout --quiet --detach "$tag"
+      echo "$name moved from $current to $tag. Its data was backed up first, to $LIVE/backups."
+    fi
+  fi
+
+  if running; then
+    echo "$name $tag is running."
+  else
+    if [ -n "$(listener)" ]; then
+      echo "Something else is using port $PORT, so $name can't start." >&2
+      exit 1
+    fi
+    # Her secrets, from the app's own .env.
+    [ -f "$app/.env" ] && ln -sfn "$app/.env" "$CODE/.env"
+    lock=$(git -C "$CODE" rev-parse -q --verify HEAD:package-lock.json || echo none)
+    if [ ! -d "$CODE/node_modules" ] || [ "$(cat "$LIVE/installed" 2>/dev/null)" != "$lock" ]; then
+      echo "Installing what $name $tag needs…"
+      (cd "$CODE" && npm ci --no-audit --no-fund --loglevel=error) >"$LIVE/app.log" 2>&1 || { tail -n 20 "$LIVE/app.log" >&2; exit 1; }
+      echo "$lock" >"$LIVE/installed"
+    fi
+    (cd "$CODE" && npm run --silent build) >>"$LIVE/app.log" 2>&1 || { echo "$name $tag didn't build:" >&2; tail -n 20 "$LIVE/app.log" >&2; exit 1; }
+    # All of its output to the log, so nothing holds this script's (the Dock app waits for those to close).
+    (cd "$CODE" && DATA_DIR="$LIVE/data" PORT="$PORT" NODE_ENV=production exec nohup node_modules/.bin/tsx server/index.ts) >>"$LIVE/app.log" 2>&1 </dev/null &
+    for _ in $(seq 1 120); do
+      [ -n "$(listener)" ] && break
+      sleep 0.25
+    done
+    # The process serving the app (tsx starts it as a child), so stopping it stops the app.
+    pid=$(listener)
+    if [ -z "$pid" ]; then
+      echo "$name $tag didn't start:" >&2
+      tail -n 20 "$LIVE/app.log" >&2
+      exit 1
+    fi
+    echo "$pid" >"$LIVE/app.pid"
+    echo "$name $tag is running."
+  fi
+  echo "It's at $URL"
+  [ -n "${STUDIO_NO_OPEN:-}" ] || open "$URL"
+  exit 0
 fi
 
 APP_DIR="$(config .appDir)"
