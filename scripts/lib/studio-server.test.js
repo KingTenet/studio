@@ -11,7 +11,7 @@ const path = require('node:path');
 // The server keeps its logs under STUDIO_HOME, read once at load: point it at a throwaway folder before loading it.
 process.env.STUDIO_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-server-test-'));
 
-const { serveVadFile, appAgents, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, freeTextKeys, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats } = require('./studio-server');
+const { serveVadFile, appAgents, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats } = require('./studio-server');
 
 test('isLocalHost: localhost and 127.0.0.1 only, so a rebound DNS name is refused', () => {
   assert.ok(isLocalHost('localhost'));
@@ -45,13 +45,45 @@ test('artifactFile: serves the index and snapshots from the worktree folder, not
   assert.equal(artifactFile(folder, 'snapshots'), null);
 });
 
-test('freeTextKeys: arrows to the free-text option from the focused one, then clears what it holds', () => {
-  const prompt = { options: [{ key: '1' }, { key: '2' }, { key: '3', free: true, typed: '' }, { key: '4' }], focused: '1' };
-  assert.deepEqual(freeTextKeys(prompt, '3'), ['down', 'down']);
-  assert.deepEqual(freeTextKeys({ ...prompt, focused: '4', options: prompt.options.map((o) => (o.free ? { ...o, typed: 'ab' } : o)) }, '3'), ['up', 'backspace', 'backspace']);
-  assert.deepEqual(freeTextKeys({ ...prompt, focused: '3' }, '3'), []);
-  assert.equal(freeTextKeys(prompt, '2'), null);
-  assert.equal(freeTextKeys({ ...prompt, focused: null }, '3'), null);
+// A Claude question whose input lands a few reads late, like a busy session's: Enter typed while text is still pending becomes a line break.
+const laggyQuestion = (focused, field, lag = 3) => {
+  const state = { focused, field, answered: null, queue: [], busy: 0 };
+  const apply = (input) => {
+    if (input === 'down' || input === 'up') state.focused = String(Number(state.focused) + (input === 'down' ? 1 : -1));
+    else if (input === 'backspace') state.field = state.field.slice(0, -1);
+    else if (input === 'ctrl+e') return;
+    else if (input === 'enter') state.busy ? (state.field += '\r') : (state.answered = state.field);
+    else (state.field += input), (state.busy = lag);
+  };
+  const screen = () =>
+    ['Pick one?', '', ...['Red', 'Green', 'Blue', state.field.trim() || 'Type something.', 'Chat about this'].map((label, i) => `${state.focused === String(i + 1) ? '❯' : ' '} ${i + 1}. ${label}`)].join('\n');
+  return {
+    state,
+    read: () => {
+      state.busy = Math.max(0, state.busy - 1);
+      state.queue = state.queue.filter((item) => (--item.at > 0 ? true : (apply(item.input), false)));
+      return screen();
+    },
+    keys: (...keys) => keys.forEach((input) => state.queue.push({ input, at: lag })),
+    type: (text) => state.queue.push({ input: text, at: lag }),
+  };
+};
+
+test('answerFreeText: arrows to the free-text option, clears it, types, and presses Enter only once the text shows', async () => {
+  const fresh = laggyQuestion('1', '');
+  assert.equal(await answerFreeText('4', 'logging first', fresh.read, fresh.keys, fresh.type, 2000), null);
+  for (let i = 0; i < 5; i++) fresh.read();
+  assert.equal(fresh.state.answered, 'logging first');
+
+  // What an earlier answer's late Enter left behind: text the screen shows, and a line break it doesn't.
+  const leftover = laggyQuestion('4', 'old answer\r');
+  assert.equal(await answerFreeText('4', 'new answer', leftover.read, leftover.keys, leftover.type, 2000), null);
+  for (let i = 0; i < 5; i++) leftover.read();
+  assert.equal(leftover.state.answered, 'new answer');
+
+  const gone = laggyQuestion('1', '');
+  assert.match(await answerFreeText('2', 'x', gone.read, gone.keys, gone.type, 2000), /no such text option/);
+  assert.match(await answerFreeText('4', 'x', () => 'no question here', gone.keys, gone.type, 2000), /no such text option/);
 });
 
 test('takeRestoredInput: clears the message an interrupt put back and returns it; empty when none shows', async () => {

@@ -635,19 +635,43 @@ const sendJson = (res, status, body) => {
   res.end(JSON.stringify(body));
 };
 
+// Screen text with its whitespace and box sides gone, so text the terminal wrapped still matches.
+const compactText = (text) => stripAnsi(text).replace(/[\s│]/g, '');
+
 /**
- * The keys that put a question's free-text option ready to type into: arrows from the focused option
- * to it (its number would be typed into it once it has focus), then a backspace per character it
- * already holds. Null when `key` isn't that option or the focus can't be told.
+ * Types `text` into a question's free-text option `key` and picks it: arrows from the focused option to it, backspaces
+ * until it's empty, the text, then Enter. Each step waits (up to `wait` ms) for the screen from `read` to show it landed,
+ * since a busy session takes keys in late: an Enter that arrives while the text is still coming in is typed into the
+ * field as a line break instead of answering. The error to show, or null once Enter is pressed.
  */
-const freeTextKeys = (prompt, key) => {
-  const keys = prompt.options.map((option) => option.key);
-  const target = prompt.options.find((option) => option.key === key && option.free);
-  if (!target || !keys.includes(prompt.focused)) {
-    return null;
+const answerFreeText = async (key, text, read, keys, type, wait = 3000) => {
+  const until = async (done) => {
+    for (let waited = 0; ; waited += 100) {
+      const screen = read();
+      if (done(panePrompt(screen), screen)) return true;
+      if (waited >= wait) return false;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  };
+  const free = (prompt) => prompt?.options.find((option) => option.key === key && option.free);
+  const prompt = panePrompt(read());
+  const order = prompt?.options.map((option) => option.key) ?? [];
+  if (!free(prompt) || !order.includes(prompt.focused)) return 'The question on screen has no such text option any more. Answer it in herdr.';
+  const steps = order.indexOf(key) - order.indexOf(prompt.focused);
+  if (steps) keys(...Array(Math.abs(steps)).fill(steps > 0 ? 'down' : 'up'));
+  if (!(await until((now) => now?.focused === key))) return 'The text option never took focus. Answer it in herdr.';
+  // Ctrl-E puts the cursor at the end (an arrow can leave it at the start); the screen shows only the first line of a
+  // long answer, and not a stray line break, so clear in rounds with spares.
+  for (let round = 0; free(panePrompt(read()))?.typed && round < 5; round++) {
+    keys('ctrl+e', ...Array(free(panePrompt(read())).typed.length + 10).fill('backspace'));
+    await until((now) => !free(now)?.typed);
   }
-  const steps = keys.indexOf(key) - keys.indexOf(prompt.focused);
-  return [...Array(Math.abs(steps)).fill(steps > 0 ? 'down' : 'up'), ...Array(target.typed.length).fill('backspace')];
+  if (free(panePrompt(read()))?.typed !== '') return 'The text option could not be cleared. Answer it in herdr.';
+  type(text);
+  const tail = compactText(text).slice(-24);
+  if (!(await until((now, screen) => now?.focused === key && compactText(screen).includes(tail)))) return 'The answer never showed in the text option. Check it in herdr.';
+  keys('enter');
+  return null;
 };
 
 /**
@@ -700,15 +724,21 @@ const sendToSession = async (req, res) => {
     const typed = String(answer?.text ?? '')
       .replace(/\s*\n\s*/g, ' ')
       .trim();
-    const prompt = panePrompt(paneScreen(paneId));
-    const keys = prompt && typed ? freeTextKeys(prompt, String(answer?.key)) : null;
-    if (!keys) {
-      sendJson(res, 409, { error: typed ? 'The question on screen has no such text option any more. Answer it in herdr.' : 'Type an answer first.' });
+    if (!typed) {
+      sendJson(res, 409, { error: 'Type an answer first.' });
       return;
     }
-    if (keys.length) execFileSync('herdr', ['pane', 'send-keys', paneId, ...keys], { stdio: 'ignore', timeout: 5000 });
-    execFileSync('herdr', ['pane', 'send-text', paneId, typed], { stdio: 'ignore', timeout: 5000 });
-    execFileSync('herdr', ['pane', 'send-keys', paneId, 'enter'], { stdio: 'ignore', timeout: 5000 });
+    const error = await answerFreeText(
+      String(answer?.key),
+      typed,
+      () => paneScreen(paneId),
+      (...keys) => execFileSync('herdr', ['pane', 'send-keys', paneId, ...keys], { stdio: 'ignore', timeout: 5000 }),
+      (text) => execFileSync('herdr', ['pane', 'send-text', paneId, text], { stdio: 'ignore', timeout: 5000 })
+    );
+    if (error) {
+      sendJson(res, 409, { error });
+      return;
+    }
     res.writeHead(204).end();
     return;
   }
@@ -1721,4 +1751,4 @@ if (require.main === module) {
   }, PUSH_RETRY_MS);
 }
 
-module.exports = { serveVadFile, appAgents, appInfo, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, freeTextKeys, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, shellQuote, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats };
+module.exports = { serveVadFile, appAgents, appInfo, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, shellQuote, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats };
