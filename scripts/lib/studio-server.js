@@ -29,7 +29,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 
-const { COMMAND_SHELL_MARKER, pausedSessions, processTree, readClosed, readReconnected, runningCommands, withRealSessions } = require('./claude-reaper');
+const { COMMAND_SHELL_MARKER, pausedSessions, processTree, readClosed, logSession, readReconnected, runningCommands, withRealSessions } = require('./claude-reaper');
 const { describe: describeArtifacts, folderFor: artifactFolder, locate: locateArtifact, remove: removeArtifacts, removeNote: removeArtifactNote } = require('./artifacts');
 const { paneInput, panePrompt, readTranscript, sessionTitle, stripAnsi, transcriptPath, usageLimit } = require('./session-view');
 const { EFFORT, bringBack, discard: discardFeature, endPreview, goBack, keep: keepFeature, nextVersion, preview, pushInBackground, read: readFeature, readMode, restore, runGate, setMode, start: startFeature, summarise, versions } = require('./feature');
@@ -1257,6 +1257,7 @@ const syncEffort = (appDir) => {
     const key = `${chat.paneId} ${chat.sessionId}`;
     if (effortTyped.get(key) === level || paneInput(paneScreen(chat.paneId))) return false;
     execFileSync('herdr', ['pane', 'run', chat.paneId, `/effort ${level}`], { stdio: 'ignore', timeout: 5000 });
+    logSession({ event: 'typed', pane: chat.paneId, session: chat.sessionId, text: `/effort ${level}` });
     effortTyped.set(key, level);
     return true;
   } catch {
@@ -1290,6 +1291,7 @@ const setModeNow = async (req, res) => {
 const clearChat = async (chat) => {
   if (!chat) return;
   execFileSync('herdr', ['pane', 'run', chat.paneId, '/clear'], { stdio: 'ignore', timeout: 5000 });
+  logSession({ event: 'typed', pane: chat.paneId, session: chat.sessionId ?? null, text: '/clear' });
   // Time for /clear to run, so a message sent next goes to the cleared conversation and not into the input box beside it.
   await new Promise((resolve) => setTimeout(resolve, 1000));
 };

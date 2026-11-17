@@ -39,6 +39,11 @@
 #        studio new <app> [--collaborator <github user>]
 #        studio switch <app>
 #        studio run [<app>]
+#        studio logs              # puts the studio's logs in one zip on the Desktop, to send to whoever helps
+#
+# Logs, in ~/.studio/logs: commands.log (what every studio command printed), studio.log and reaper.log (those tabs'
+# output), sessions.jsonl (which conversation the chat's Claude runs, and what the studio typed into it), actions.jsonl
+# (the cockpit's actions) and job-*.log. One past 5 MB is cut to its last 1 MB.
 #
 # Environment: STUDIO_HOME (default ~/.studio, holding config.json with the app's appDir and appPort),
 # STUDIO_PORT (the cockpit's port, default 4000), STUDIO_WHISPER_PORT (whisper-server's port, default 8178),
@@ -68,7 +73,7 @@ WHISPER_MODEL="${STUDIO_WHISPER_MODEL:-$HOME/.whisper/ggml-small.en.bin}"
 WORKSPACE="${STUDIO_WORKSPACE:-studio}"
 CONFIG="$STUDIO_HOME/config.json"
 
-usage() { echo "usage: studio up [--dry-run]   or   studio new <app> [--collaborator <github user>]   or   studio switch <app>   or   studio run [<app>]" >&2; exit 2; }
+usage() { echo "usage: studio up [--dry-run]   or   studio new <app> [--collaborator <github user>]   or   studio switch <app>   or   studio run [<app>]   or   studio logs" >&2; exit 2; }
 DRY_RUN=false
 case "${1:-} ${2:-}" in
   "up ") ;;
@@ -76,8 +81,24 @@ case "${1:-} ${2:-}" in
   new\ ?*) ;;
   switch\ ?*) [ $# -eq 2 ] || usage ;;
   run\ *) [ $# -le 2 ] || usage ;;
+  "logs ") ;;
   *) usage ;;
 esac
+
+LOGS="$STUDIO_HOME/logs"
+mkdir -p "$LOGS"
+for log in "$LOGS"/*.log "$LOGS"/*.jsonl; do
+  if [ -f "$log" ] && [ "$(stat -f %z "$log")" -gt 5242880 ]; then
+    tail -c 1048576 "$log" >"$log.tmp" && mv "$log.tmp" "$log"
+  fi
+done
+# What every studio command prints also goes to commands.log, after a line saying when and what (once, not again when
+# this script runs itself again).
+if [ -z "${STUDIO_LOGGING:-}" ]; then
+  export STUDIO_LOGGING=1
+  echo "--- $(date '+%Y-%m-%d %H:%M:%S') studio $*" >>"$LOGS/commands.log"
+  exec > >(tee -a "$LOGS/commands.log") 2> >(tee -a "$LOGS/commands.log" >&2)
+fi
 
 q() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
 config() { [ -f "$CONFIG" ] && jq -r "$1 // empty" "$CONFIG" || true; }
@@ -178,6 +199,56 @@ if [ "$1" = new ]; then
   else
     exec "$0" switch "$name"
   fi
+  exit 0
+fi
+
+# --- studio logs ----------------------------------------------------------------------------------
+
+if [ "$1" = logs ]; then
+  stamp=$(date +%Y%m%d-%H%M%S)
+  mkdir -p "$HOME/Desktop"
+  out="$HOME/Desktop/studio-logs-$stamp.zip"
+  work=$(mktemp -d)
+  bundle="$work/studio-logs-$stamp"
+  mkdir -p "$bundle"
+  # The studio's logs, without the dictation clips (recordings of a voice).
+  cp -R "$LOGS" "$bundle/logs"
+  rm -rf "$bundle/logs/dictation"
+  [ ! -f "$CONFIG" ] || cp "$CONFIG" "$bundle/config.json"
+  app="$(config .appDir)"
+  [ -z "$app" ] || [ ! -f "$app/data/logs/dev.log" ] || cp "$app/data/logs/dev.log" "$bundle/app-dev.log"
+  [ ! -d "$HOME/.claude/state/panes" ] || cp -R "$HOME/.claude/state/panes" "$bundle/panes"
+  for live in "$HOME"/Studio/.live/*/app.log; do
+    [ ! -f "$live" ] || cp "$live" "$bundle/live-$(basename "$(dirname "$live")").log"
+  done
+  # What the Mac, the studio and the app look like now.
+  (
+    set +e
+    trap - ERR
+    echo "Made $(date)"
+    sw_vers
+    echo
+    echo "Studio $STUDIO_DIR: $(git -C "$STUDIO_DIR" log -1 --format='%h %cd' --date=iso)"
+    git -C "$STUDIO_DIR" status --short
+    if [ -n "$app" ] && [ -d "$app/.git" ]; then
+      echo
+      echo "App $app, on $(git -C "$app" branch --show-current), versions $(git -C "$app" tag --list 'v*' --sort=-v:refname | head -n3 | paste -sd ' ' -)"
+      git -C "$app" log --oneline -8
+      git -C "$app" status --short
+    fi
+    echo
+    for port in "$STUDIO_PORT" 4001 5001 "$STUDIO_WHISPER_PORT"; do
+      if nc -z 127.0.0.1 "$port" 2>/dev/null; then echo "port $port: in use"; else echo "port $port: free"; fi
+    done
+    echo
+    echo "node $(node --version 2>&1), $(claude --version 2>&1), herdr $(herdr --version 2>&1)"
+    echo
+    herdr pane list 2>&1
+  ) >"$bundle/info.txt" 2>&1
+  (cd "$work" && zip -qr "$out" "studio-logs-$stamp")
+  rm -rf "$work"
+  echo "Saved $out"
+  echo "Send that file to whoever is helping you. It holds the studio's logs, not your messages to Claude."
   exit 0
 fi
 
@@ -339,7 +410,7 @@ tab_cwd() { [ "$1" = studio ] && echo "$STUDIO_DIR" || echo "$APP_DIR"; }
 tab_command() {
   case "$1" in
     claude) echo "$CLAUDE" ;;
-    studio) echo "node $(q "$STUDIO_DIR/scripts/lib/studio-server.js")" ;;
+    studio) echo "node $(q "$STUDIO_DIR/scripts/lib/studio-server.js") 2>&1 | tee -a $(q "$LOGS/studio.log")" ;;
     # Its output also goes to data/logs/dev.log, which the App tab shows and sends Claude when the app breaks (logs/ is never snapshotted).
     app) echo "[ -d node_modules ] || npm install; mkdir -p data/logs; PORT=$APP_PORT npm run dev 2>&1 | tee data/logs/dev.log" ;;
     whisper)
@@ -348,7 +419,7 @@ tab_command() {
       else echo "whisper-server -m $(q "$WHISPER_MODEL") --host 127.0.0.1 --port $STUDIO_WHISPER_PORT --convert"
       fi ;;
     # It starts Claude the way this script does, so it gets the stand-in for it too.
-    reaper) echo "${STUDIO_CLAUDE_CMD:+STUDIO_CLAUDE_CMD=$(q "$STUDIO_CLAUDE_CMD") }$(q "$STUDIO_DIR/scripts/claude-reaper.sh") keep $(q "$WORKSPACE") $(q "$APP_DIR")" ;;
+    reaper) echo "${STUDIO_CLAUDE_CMD:+STUDIO_CLAUDE_CMD=$(q "$STUDIO_CLAUDE_CMD") }$(q "$STUDIO_DIR/scripts/claude-reaper.sh") keep $(q "$WORKSPACE") $(q "$APP_DIR") 2>&1 | tee -a $(q "$LOGS/reaper.log")" ;;
   esac
 }
 tab_port() {

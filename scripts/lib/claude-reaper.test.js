@@ -5,6 +5,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+// The session log (logSession) goes to a temp studio home, never the real ~/.studio.
+process.env.STUDIO_HOME = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'studio-reaper-test-'));
+
 const { KEEP_GRACE_MS, claudeCommand, commandText, keepAction, keepOnce, notePaneSession, readReconnected, pausedSessions, processTree, runningCommands, reapAction, resumeCommand, trackIdle, typedInput, withRealSessions } = require('./claude-reaper');
 
 const MIN = 60_000;
@@ -253,8 +256,8 @@ else fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + '\\n');
 `,
     { mode: 0o755 }
   );
-  const saved = { PATH: process.env.PATH, STUDIO_REAPER_DIR: process.env.STUDIO_REAPER_DIR, STUDIO_REAPER_CLAUDE_PROJECTS: process.env.STUDIO_REAPER_CLAUDE_PROJECTS, STUDIO_CLAUDE_CMD: process.env.STUDIO_CLAUDE_CMD };
-  Object.assign(process.env, { PATH: `${path.join(root, 'bin')}:${process.env.PATH}`, STUDIO_REAPER_DIR: path.join(root, 'reaper'), STUDIO_REAPER_CLAUDE_PROJECTS: projects });
+  const saved = { PATH: process.env.PATH, STUDIO_HOME: process.env.STUDIO_HOME, STUDIO_REAPER_DIR: process.env.STUDIO_REAPER_DIR, STUDIO_REAPER_CLAUDE_PROJECTS: process.env.STUDIO_REAPER_CLAUDE_PROJECTS, STUDIO_CLAUDE_CMD: process.env.STUDIO_CLAUDE_CMD };
+  Object.assign(process.env, { PATH: `${path.join(root, 'bin')}:${process.env.PATH}`, STUDIO_HOME: path.join(root, 'studio-home'), STUDIO_REAPER_DIR: path.join(root, 'reaper'), STUDIO_REAPER_CLAUDE_PROJECTS: projects });
   delete process.env.STUDIO_CLAUDE_CMD;
   const write = (value) => fs.writeFileSync(world, JSON.stringify(value));
   const logged = () => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim().split('\n').map((line) => JSON.parse(line)) : []);
@@ -305,6 +308,7 @@ else fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + '\\n');
     assert.deepEqual(logged(), [['pane', 'send-keys', 'w1:p1', 'C-c'], ['pane', 'send-keys', 'w1:p1', 'C-c'], ['pane', 'run', 'w1:p1', `${claudeCommand()} --resume s1`]]);
     assert.equal(JSON.parse(fs.readFileSync(path.join(panesDir, 'w1_p1.json'), 'utf8')).session_id, 's1', 'the chat follows the resumed session');
     assert.deepEqual(readReconnected(), { at: new Date(62_000).toISOString(), paneId: 'w1:p1' });
+    assert.match(fs.readFileSync(path.join(root, 'studio-home', 'logs', 'sessions.jsonl'), 'utf8'), /"event":"restarted","pane":"w1:p1","session":"s1","why":"it ran without the studio's settings"/);
   } finally {
     for (const [name, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[name];

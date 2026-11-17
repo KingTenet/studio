@@ -179,6 +179,23 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const PANES_DIR = path.join(os.homedir(), '.claude', 'state', 'panes');
 
+/**
+ * ~/.studio/logs/sessions.jsonl: a line whenever something changes which conversation the chat's Claude runs, or the studio
+ * types into it (/effort, /clear), so a chat that loses track can be worked out afterwards. The hook (studio-hook.py) adds a
+ * line when a session starts. Never fails what it records.
+ */
+const logSession = (record, now = new Date()) => {
+  try {
+    const file = path.join(process.env.STUDIO_HOME || path.join(os.homedir(), '.studio'), 'logs', 'sessions.jsonl');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.appendFileSync(file, `${JSON.stringify({ ts: now.toISOString(), ...record })}\n`);
+  } catch {
+    // logging is best effort
+  }
+};
+// The last disagreement logged for each pane, so one that lasts is logged once.
+const disagreements = new Map();
+
 const paneFile = (paneId, dir = PANES_DIR) => path.join(dir, `${paneId.replace(/:/g, '_')}.json`);
 
 /**
@@ -192,6 +209,12 @@ const withRealSessions = (items, dir = PANES_DIR) =>
     try {
       const sessionId = JSON.parse(fs.readFileSync(paneFile(item.pane_id, dir), 'utf8')).session_id;
       if (!item.agent) return item;
+      const herdrSays = item.agent_session?.value ?? null;
+      const seen = `${sessionId} ${herdrSays}`;
+      if (sessionId && herdrSays && sessionId !== herdrSays && disagreements.get(item.pane_id) !== seen) {
+        logSession({ event: 'disagree', pane: item.pane_id, record: sessionId, herdr: herdrSays, note: "the pane's record wins; a stale record means the chat follows an old conversation" });
+      }
+      disagreements.set(item.pane_id, seen);
       if (sessionId) return { ...item, agent_session: { ...item.agent_session, value: sessionId } };
       return sessionId === null ? { ...item, agent_session: null } : item;
     } catch {
@@ -466,6 +489,7 @@ const restartWithStudio = (pane, processInfo, now, panesDir = PANES_DIR) => {
   run('herdr', ['pane', 'run', pane.pane_id, `${claudeCommand()}${resume ? ` --resume ${sessionId}` : ''}`]);
   fs.mkdirSync(reaperDir(), { recursive: true });
   fs.writeFileSync(reconnectedPath(), JSON.stringify({ at: new Date(now).toISOString(), paneId: pane.pane_id }));
+  logSession({ event: 'restarted', pane: pane.pane_id, session: resume ? sessionId : null, why: "it ran without the studio's settings" }, new Date(now));
   console.error(`${new Date(now).toISOString()} Claude in ${pane.pane_id} ran without the studio's settings, so it was started again with them`);
   return true;
 };
@@ -498,6 +522,7 @@ const keepOnce = (since, { workspaceLabel, appDir, now = Date.now(), panesDir = 
   run('herdr', ['pane', 'run', paneId, chatCommand(appDir)]);
   fs.mkdirSync(reaperDir(), { recursive: true });
   fs.writeFileSync(reconnectedPath(), JSON.stringify({ at: new Date(now).toISOString(), paneId }));
+  logSession({ event: 'restarted', pane: paneId, why: "Claude wasn't running" }, new Date(now));
   console.error(`${new Date(now).toISOString()} Claude wasn't running, so it was started again in ${paneId}`);
   return null;
 };
@@ -588,4 +613,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { COMMAND_SHELL_MARKER, KEEP_GRACE_MS, keepAction, keepOnce, readReconnected, notePaneSession, withRealSessions, claudeCommand, closedLogPath, commandText, pausedSessions, processTree, runningCommands, readClosed, reapAction, resumeCommand, trackIdle, typedInput };
+module.exports = { COMMAND_SHELL_MARKER, KEEP_GRACE_MS, keepAction, keepOnce, readReconnected, notePaneSession, logSession, withRealSessions, claudeCommand, closedLogPath, commandText, pausedSessions, processTree, runningCommands, readClosed, reapAction, resumeCommand, trackIdle, typedInput };

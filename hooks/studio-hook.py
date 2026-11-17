@@ -38,6 +38,19 @@ def record_pane(event):
     with open(path + ".tmp", "w") as f:
         json.dump({"pane_id": pane, "session_id": session_id, "transcript_path": event.get("transcript_path")}, f)
     os.replace(path + ".tmp", path)
+    log_session({"event": "session", "pane": pane, "session": session_id, "source": event.get("source")})
+
+
+def log_session(record):
+    """A line in ~/.studio/logs/sessions.jsonl (see logSession in claude-reaper.js); never fails the hook."""
+    try:
+        directory = os.path.join(os.environ.get("STUDIO_HOME") or os.path.expanduser("~/.studio"), "logs")
+        os.makedirs(directory, exist_ok=True)
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + ".%03dZ" % (int(time.time() * 1000) % 1000)
+        with open(os.path.join(directory, "sessions.jsonl"), "a") as f:
+            f.write(json.dumps({"ts": stamp, **record}) + "\n")
+    except OSError:
+        pass
 
 
 def take_page_context():
