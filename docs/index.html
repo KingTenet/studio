@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="How to install Studio, make your app and build it with Claude, one feature at a time.">
+<style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>Getting Started with Studio</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: a single guide column; a labelled sketch of the screen, the feature loop as a diagram, then short sections for each thing you do. */
+:root {
+  --bg: #f4f6f8; --surface: #ffffff; --fg: #18212b; --muted: #5a6573; --line: #d8dee6;
+  --accent: #1f6f8b; --accent-soft: #e2eff4; --keep: #23824f; --discard: #b4482f; --plan: #7a5bb5;
+  --display: "Bricolage Grotesque", system-ui, sans-serif; --body: "Instrument Sans", system-ui, sans-serif; --mono: "JetBrains Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11161c; --surface: #19212a; --fg: #e6ebf0; --muted: #98a4b2; --line: #2b3541;
+  --accent: #6cb8d4; --accent-soft: #1d3240; --keep: #5cc48b; --discard: #ec8a70; --plan: #b39be6; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #11161c; --surface: #19212a; --fg: #e6ebf0; --muted: #98a4b2; --line: #2b3541;
+  --accent: #6cb8d4; --accent-soft: #1d3240; --keep: #5cc48b; --discard: #ec8a70; --plan: #b39be6; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font: 16px/1.6 var(--body); }
+main { max-width: 780px; margin: 0 auto; padding-block: 48px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 40px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; line-height: 1.15; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: clamp(32px, 6vw, 44px); } h2 { font-size: 24px; } h3 { font-size: 17px; }
+section, header { display: flex; flex-direction: column; gap: 14px; }
+p { margin: 0; max-width: 64ch; }
+.lede { font-size: 19px; color: var(--muted); }
+kbd, code { font-family: var(--mono); font-size: 13.5px; background: var(--accent-soft); color: var(--fg); padding: 2px 6px; border-radius: 4px; }
+.cmd { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+.cmd code { font-size: 16px; padding: 4px 10px; }
+.btn { display: inline-block; font-weight: 600; font-size: 14px; padding: 1px 9px; border-radius: 6px; border: 1.5px solid currentColor; white-space: nowrap; }
+.b-keep { color: var(--keep); } .b-discard { color: var(--discard); } .b-plan { color: var(--plan); } .b-acc { color: var(--accent); }
+.figure { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+.figure svg { display: block; width: 100%; min-width: 640px; height: auto; }
+svg text { font-family: var(--body); fill: var(--fg); }
+svg .t-muted { fill: var(--muted); }
+svg .t-head { font-family: var(--display); font-weight: 700; }
+svg .pane { fill: var(--bg); stroke: var(--line); }
+svg .chrome { fill: var(--surface); stroke: var(--line); }
+svg .acc { fill: var(--accent); } svg .acc-s { stroke: var(--accent); fill: none; }
+svg .accsoft { fill: var(--accent-soft); }
+svg .keep { fill: var(--keep); } svg .discard { fill: var(--discard); } svg .plan { fill: var(--plan); }
+svg .keep-s { stroke: var(--keep); fill: none; } svg .discard-s { stroke: var(--discard); fill: none; } svg .plan-s { stroke: var(--plan); fill: none; }
+svg .line { stroke: var(--line); }
+svg .white { fill: var(--surface); }
+.modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.mode { background: var(--surface); border: 1px solid var(--line); border-top: 4px solid var(--c); border-radius: 8px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mode h3 { color: var(--c); }
+.mode p { font-size: 15px; }
+.mode .eg { color: var(--muted); font-size: 14px; font-style: italic; }
+@media (max-width: 620px) { .modes { grid-template-columns: 1fr; } }
+ul.plain { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
+ul.plain li { max-width: 64ch; }
+dl { margin: 0; display: grid; grid-template-columns: minmax(150px, 220px) 1fr; gap: 12px 20px; }
+dt { font-weight: 600; }
+dd { margin: 0; min-width: 0; }
+@media (max-width: 560px) { dl { grid-template-columns: 1fr; gap: 4px; } dd { margin-bottom: 10px; } }
+.note { background: var(--accent-soft); border-radius: 8px; padding: 14px 16px; }
+.install { display: flex; align-items: stretch; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px; min-width: 0; }
+.install pre { flex: 1; min-width: 0; margin: 0; overflow-x: auto; font-family: var(--mono); font-size: 13.5px; line-height: 1.5; padding: 6px 8px; background: var(--accent-soft); border-radius: 5px; white-space: pre; }
+.install button { font: 600 14px var(--body); color: var(--surface); background: var(--accent); border: 0; border-radius: 6px; padding: 0 16px; cursor: pointer; }
+.install button:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+.install button:disabled { opacity: .45; cursor: not-allowed; }
+.maker { display: flex; flex-direction: column; gap: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+.maker .install { border: 0; padding: 0; }
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.field label { font-weight: 600; }
+.field input { font: 15px var(--mono); color: var(--fg); background: var(--bg); border: 1.5px solid var(--line); border-radius: 6px; padding: 8px 10px; max-width: 360px; width: 100%; box-sizing: border-box; }
+.field input:focus-visible { outline: none; border-color: var(--accent); }
+.field input[aria-invalid="true"] { border-color: var(--discard); }
+.optional { font-weight: 400; color: var(--muted); }
+.help { font-size: 14px; color: var(--muted); }
+.problem { color: var(--discard); font-size: 14px; font-weight: 600; }
+.first { counter-reset: s; list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.first li { counter-increment: s; display: grid; grid-template-columns: 34px 1fr; gap: 12px; align-items: start; }
+.first li::before { content: counter(s); font-family: var(--display); font-weight: 700; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--surface); font-size: 15px; }
+.first li > div { min-width: 0; padding-top: 3px; }
+</style>
+</head>
+<body>
+
+<main>
+  <header>
+    <h1>Getting started with Studio</h1>
+    <p class="lede">Studio is where you build your web app with Claude, one feature at a time. You describe what you want in plain words, watch it appear, and keep it or throw it away. Every version is saved for you, so there's nothing to set up and nothing you can break for good.</p>
+  </header>
+
+  <section>
+    <h2>1. Install Studio (once)</h2>
+    <p>You don't need anything set up first: no GitHub account, no developer tools. Open the <b>Terminal</b> app (press <kbd>⌘ Space</kbd>, type <i>Terminal</i>, press Return), paste this line and press Return:</p>
+    <div class="install">
+      <pre id="install-cmd">/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/KingTenet/studio/main/bootstrap.sh)"</pre>
+      <button type="button" class="copy" data-copy="install-cmd">Copy</button>
+    </div>
+    <p>It takes a while, about 15–30 minutes the first time. Along the way:</p>
+    <ul class="plain">
+      <li><b>It asks for your Mac's password</b>, sometimes more than once. Nothing shows on screen as you type. That's normal; press Return when you've typed it.</li>
+      <li><b>Your browser opens to log into GitHub.</b> GitHub is where your app is backed up, privately. If you don't have an account yet, you can make one there and then. Terminal shows a code to type into the page.</li>
+      <li><b>Your browser opens to log into Claude</b> with your own Claude account.</li>
+      <li><b>It asks for your name and email,</b> which go on your app's saved versions.</li>
+    </ul>
+    <p>If it stops part way, it says what went wrong. Fix that, paste the same line again, and it carries on from where it stopped. Steps that are already done are skipped.</p>
+  </section>
+
+  <section>
+    <h2>2. Make your app</h2>
+    <p>When the install says <i>All set</i>, open a <b>new</b> Terminal window (<kbd>⌘ N</kbd>), so it knows the <code>studio</code> command. Then fill this in and copy the command it makes:</p>
+    <form class="maker" id="maker" novalidate>
+      <div class="field">
+        <label for="app-name">Your app's name</label>
+        <input id="app-name" type="text" value="my-app" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="app-name-help">
+        <p class="help" id="app-name-help">Lowercase letters, numbers and dashes, such as <code>writing-planner</code>. It's the name of the app's folder and its backup on GitHub.</p>
+      </div>
+      <div class="field">
+        <label for="collaborator">Someone to help you <span class="optional">(optional)</span></label>
+        <input id="collaborator" type="text" placeholder="their GitHub username" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="collaborator-help">
+        <p class="help" id="collaborator-help">Their GitHub username. They get an invitation to your app's private backup, so they can look at it with you.</p>
+      </div>
+      <div class="install">
+        <pre id="new-cmd">studio new my-app</pre>
+        <button type="button" class="copy" data-copy="new-cmd" id="copy-new">Copy</button>
+      </div>
+      <p class="problem" id="maker-problem" role="alert" hidden></p>
+    </form>
+    <p>Paste it into the new Terminal window and press Return. Studio makes your app, backs it up privately on GitHub and puts it in <b>Applications</b>. That's the real app, for using it day to day (see <i>Using your app for real</i> below). Then type <code>studio up</code> to start building.</p>
+  </section>
+
+  <section>
+    <h2>Open it</h2>
+    <p>Open the Terminal app, type this and press Return. After installing, it's the only command you need.</p>
+    <div class="cmd"><code>studio up</code><span>Studio opens in your browser at <b>localhost:4000</b>.</span></div>
+    <p>If Studio is already running, typing it again just brings the page back. You can close the browser tab whenever you like; your work carries on where you left it.</p>
+  </section>
+
+  <section>
+    <h2>What's on the screen</h2>
+    <div class="figure" role="img" aria-label="Studio's screen in three columns. Left: Feature, showing the feature being built, its checkpoints, Keep and Discard, and below it Versions. Middle: your app, with tabs for App, Artifacts and Draw. Right: the chat with Claude, with the Ask, Plan and Build switch and the message box.">
+      <svg viewBox="0 0 720 360" xmlns="http://www.w3.org/2000/svg">
+        <rect class="chrome" x="4" y="4" width="712" height="352" rx="10"/>
+        <text x="20" y="28" font-size="12" class="t-muted">my-app · v4 · building: weekly planner</text>
+        <!-- left rail -->
+        <rect class="pane" x="16" y="40" width="160" height="304" rx="6"/>
+        <text x="28" y="62" font-size="11" class="t-muted" letter-spacing="1">FEATURE</text>
+        <text x="28" y="82" font-size="14" class="t-head">weekly planner</text>
+        <circle class="acc" cx="34" cy="102" r="4"/><text x="44" y="106" font-size="11">Added the week grid</text>
+        <circle class="acc" cx="34" cy="122" r="4"/><text x="44" y="126" font-size="11">Drag calls into days</text>
+        <circle class="acc" cx="34" cy="142" r="4"/><text x="44" y="146" font-size="11">Hours per call</text>
+        <rect class="keep" x="28" y="160" width="62" height="24" rx="5"/><text x="59" y="176" font-size="12" text-anchor="middle" class="white" font-weight="600">Keep</text>
+        <rect class="discard-s" x="98" y="160" width="66" height="24" rx="5" stroke-width="1.5"/><text x="131" y="176" font-size="12" text-anchor="middle" font-weight="600" style="fill:var(--discard)">Discard</text>
+        <line class="line" x1="24" y1="200" x2="168" y2="200"/>
+        <text x="28" y="222" font-size="11" class="t-muted" letter-spacing="1">VERSIONS</text>
+        <text x="28" y="244" font-size="12">v4 Calendar of deadlines</text>
+        <text x="28" y="264" font-size="12">v3 Three lists</text>
+        <text x="28" y="284" font-size="12" class="t-muted">v2 Example todo list</text>
+        <text x="28" y="304" font-size="12" class="t-muted">v1 Getting Started</text>
+        <!-- middle -->
+        <rect class="pane" x="186" y="40" width="330" height="304" rx="6"/>
+        <rect class="accsoft" x="198" y="50" width="48" height="22" rx="5"/><text x="222" y="65" font-size="12" text-anchor="middle" font-weight="600">App</text>
+        <text x="280" y="65" font-size="12" text-anchor="middle" class="t-muted">Artifacts</text>
+        <text x="338" y="65" font-size="12" text-anchor="middle" class="t-muted">Draw</text>
+        <rect class="chrome" x="198" y="84" width="306" height="248" rx="4"/>
+        <text x="214" y="110" font-size="15" class="t-head">This week</text>
+        <g font-size="10" class="t-muted"><text x="214" y="134">Mon</text><text x="272" y="134">Tue</text><text x="330" y="134">Wed</text><text x="388" y="134">Thu</text><text x="446" y="134">Fri</text></g>
+        <rect class="accsoft" x="212" y="142" width="52" height="40" rx="4"/><text x="216" y="158" font-size="9">Granta</text><text x="216" y="172" font-size="9" class="t-muted">2h</text>
+        <rect class="accsoft" x="328" y="142" width="52" height="64" rx="4"/><text x="332" y="158" font-size="9">Pitch: The</text><text x="332" y="170" font-size="9">Guardian</text><text x="332" y="184" font-size="9" class="t-muted">3h</text>
+        <text x="351" y="300" font-size="12" text-anchor="middle" class="t-muted">your app, live, as Claude builds it</text>
+        <!-- right -->
+        <rect class="pane" x="526" y="40" width="178" height="304" rx="6"/>
+        <text x="538" y="62" font-size="11" class="t-muted" letter-spacing="1">CHAT</text>
+        <rect class="accsoft" x="570" y="76" width="124" height="44" rx="8"/><text x="578" y="94" font-size="11">Let me drag calls</text><text x="578" y="108" font-size="11">into a weekly plan</text>
+        <rect class="chrome" x="536" y="130" width="140" height="58" rx="8"/><text x="544" y="148" font-size="11">Done: drag any call</text><text x="544" y="162" font-size="11">onto a day and set</text><text x="544" y="176" font-size="11">its hours.</text>
+        <rect class="chrome" x="536" y="270" width="158" height="22" rx="5"/>
+        <text x="563" y="285" font-size="11" text-anchor="middle" class="t-muted">Ask</text>
+        <text x="613" y="285" font-size="11" text-anchor="middle" class="t-muted">Plan</text>
+        <rect class="acc" x="642" y="272" width="50" height="18" rx="4"/><text x="667" y="285" font-size="11" text-anchor="middle" class="white" font-weight="600">Build</text>
+        <rect class="chrome" x="536" y="300" width="158" height="32" rx="6"/><text x="546" y="320" font-size="11" class="t-muted">Message…</text>
+      </svg>
+    </div>
+    <dl>
+      <dt>Left: Feature and Versions</dt><dd>What you're building now and each step Claude has saved, with <span class="btn b-keep">Keep</span> and <span class="btn b-discard">Discard</span>. Below that, every version you've kept so far.</dd>
+      <dt>Middle: your app</dt><dd>Your app, running live. It changes as Claude works, so you can try things straight away. The <b>Artifacts</b> tab shows plans and explanations Claude writes for you. On <b>Draw</b> you can sketch something and send the sketch to Claude.</dd>
+      <dt>Right: the chat</dt><dd>Talk to Claude here. The switch above the message box says what kind of message you're sending.</dd>
+    </dl>
+  </section>
+
+  <section>
+    <h2>Three kinds of message</h2>
+    <div class="modes">
+      <div class="mode" style="--c: var(--accent)"><h3>Ask</h3><p>A question. Claude looks and answers, and changes nothing.</p><p class="eg">“Where do my deadlines get saved?”</p></div>
+      <div class="mode" style="--c: var(--plan)"><h3>Plan</h3><p>Talk an idea through first. Claude asks you a few questions, one at a time, each with a suggested answer, then shows you a plan. Nothing changes yet.</p><p class="eg">“I'd like a weekly planner.”</p></div>
+      <div class="mode" style="--c: var(--keep)"><h3>Build</h3><p>Make the change. Claude edits the app, and you see it happen in the middle.</p><p class="eg">“Make the deadlines red when they're this week.”</p></div>
+    </div>
+    <p>A plan comes with a <span class="btn b-plan">Build this</span> button. Press it when you're happy, and Claude builds exactly what you agreed.</p>
+  </section>
+
+  <section>
+    <h2>How a feature works</h2>
+    <p>A <b>feature</b> is one thing you want your app to do, like "weekly planner". When you send your first Plan or Build message, Studio asks you to name the feature. After that it saves your work by itself.</p>
+    <div class="figure" role="img" aria-label="The feature loop. Name a feature. Plan it, optionally, then build it. Each time Claude finishes a change a checkpoint is saved. Try it in the app and ask for changes, which loops back to more checkpoints. Then Keep, which makes the next version, or Discard, which goes back to how things were. Go back to here returns to an earlier checkpoint.">
+      <svg viewBox="0 0 720 250" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="acc" d="M0 0 L10 5 L0 10 z"/></marker>
+          <marker id="ark" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="keep" d="M0 0 L10 5 L0 10 z"/></marker>
+          <marker id="ard" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="discard" d="M0 0 L10 5 L0 10 z"/></marker>
+        </defs>
+        <rect class="chrome" x="10" y="90" width="110" height="56" rx="8"/>
+        <text x="65" y="114" text-anchor="middle" font-size="14" class="t-head">Name it</text>
+        <text x="65" y="133" text-anchor="middle" font-size="11" class="t-muted">“weekly planner”</text>
+        <path class="acc-s" d="M120 118 L148 118" stroke-width="2" marker-end="url(#ar)"/>
+
+        <rect class="chrome" x="150" y="40" width="120" height="50" rx="8" stroke-dasharray="4 3"/>
+        <text x="210" y="62" text-anchor="middle" font-size="14" class="t-head" style="fill:var(--plan)">Plan</text>
+        <text x="210" y="79" text-anchor="middle" font-size="11" class="t-muted">if you like</text>
+        <path class="plan-s" d="M210 90 L210 112" stroke-width="2" marker-end="url(#ar)"/>
+        <rect class="chrome" x="150" y="114" width="120" height="56" rx="8"/>
+        <text x="210" y="138" text-anchor="middle" font-size="14" class="t-head" style="fill:var(--keep)">Build</text>
+        <text x="210" y="156" text-anchor="middle" font-size="11" class="t-muted">Claude changes it</text>
+        <path class="acc-s" d="M270 142 L300 142" stroke-width="2" marker-end="url(#ar)"/>
+
+        <rect class="accsoft" x="302" y="114" width="150" height="56" rx="8"/>
+        <text x="377" y="137" text-anchor="middle" font-size="14" class="t-head">Checkpoint saved</text>
+        <text x="377" y="155" text-anchor="middle" font-size="11" class="t-muted">after every change</text>
+        <path class="acc-s" d="M452 142 L482 142" stroke-width="2" marker-end="url(#ar)"/>
+
+        <rect class="chrome" x="484" y="114" width="110" height="56" rx="8"/>
+        <text x="539" y="137" text-anchor="middle" font-size="14" class="t-head">Try it</text>
+        <text x="539" y="155" text-anchor="middle" font-size="11" class="t-muted">in the app</text>
+        <path class="acc-s" d="M539 170 C 539 222, 230 222, 214 174" stroke-width="1.5" marker-end="url(#ar)"/>
+        <text x="380" y="232" text-anchor="middle" font-size="12" class="t-muted">“Make the hours bigger”: ask for changes as often as you like</text>
+        <path class="acc-s" d="M377 114 C 377 92, 330 92, 322 110" stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#ar)"/>
+        <text x="380" y="88" text-anchor="middle" font-size="11" class="t-muted">Go back to here</text>
+
+        <path class="keep-s" d="M594 130 L650 82" stroke-width="2" marker-end="url(#ark)"/>
+        <rect class="keep" x="626" y="40" width="86" height="40" rx="8"/>
+        <text x="669" y="58" text-anchor="middle" font-size="14" class="white" font-weight="700">Keep</text>
+        <text x="669" y="73" text-anchor="middle" font-size="10" class="white">new version v5</text>
+        <path class="discard-s" d="M594 156 L650 196" stroke-width="2" marker-end="url(#ard)"/>
+        <rect class="discard" x="626" y="182" width="86" height="40" rx="8"/>
+        <text x="669" y="200" text-anchor="middle" font-size="14" class="white" font-weight="700">Discard</text>
+        <text x="669" y="215" text-anchor="middle" font-size="10" class="white">back to v4</text>
+      </svg>
+    </div>
+    <dl>
+      <dt><span class="btn b-acc">Go back to here</span></dt><dd>Next to any earlier checkpoint. Use it if Claude went the wrong way: the app and its test data go back to that moment. Changed your mind? <b>Bring them back</b> works until you send your next message.</dd>
+      <dt><span class="btn b-keep">Keep</span></dt><dd>When the feature works the way you want. Studio checks the app still works properly, then saves the feature as the next version, with a short note on what it does. If the check finds a problem, ask Claude to fix it. You can also choose <b>keep anyway</b>.</dd>
+      <dt><span class="btn b-discard">Discard</span></dt><dd>When you'd rather not have it. The app goes back to your last version, as if the feature never happened.</dd>
+    </dl>
+    <p>After Keep or Discard, the chat starts afresh for your next feature. Work on one feature at a time.</p>
+  </section>
+
+  <section>
+    <h2>Talking instead of typing</h2>
+    <p>Click the ear by the message box and just speak. Studio writes down what you say. Press <kbd>Space</kbd> to send it, or the mic to edit the text first. <kbd>Esc</kbd> throws it away.</p>
+  </section>
+
+  <section>
+    <h2>Your versions</h2>
+    <p>Every feature you keep becomes a version: v1, v2, v3 and so on. They're listed on the left, newest first. Nothing in the list is ever lost.</p>
+    <dl>
+      <dt>Preview</dt><dd>Look at an old version in the middle for a while. <b>back to latest</b> returns you to where you were.</dd>
+      <dt>Restore</dt><dd>Bring an old version back for good. It's saved as a new version on top, so the later versions stay in the list and you can change your mind again.</dd>
+    </dl>
+  </section>
+
+  <section>
+    <h2>Using your app for real</h2>
+    <p>The app in the middle of Studio is your workshop. Its data is for trying things out, and Discard or Go back can rewind it. Keep your real calls, deadlines and plans in the <b>real</b> app:</p>
+    <ul class="plain">
+      <li>Open your app from <b>Applications</b> (it has your app's name), or drag it into the Dock. It opens in the browser at <b>localhost:5001</b>.</li>
+      <li>It runs the newest version you kept, with its own data. Nothing you do in Studio touches that data.</li>
+      <li>After you keep a new version, the next time you open the app it updates itself, and saves a backup copy of your data first.</li>
+    </ul>
+    <p class="note">You don't need Studio running to use your app. Studio is only for changing it.</p>
+  </section>
+
+  <section>
+    <h2>Another app</h2>
+    <p>Studio works on one app at a time. To start a second one, type <code>studio new</code> and its name in Terminal, for example <code>studio new recipe-box</code>. Studio makes it, switches to it, and puts it in Applications too.</p>
+    <p>To go back to the first, type <code>studio switch</code> and its name, for example <code>studio switch my-app</code>. Each app keeps its own versions, its own feature in progress and its own chat with Claude, so you pick up where you left off.</p>
+  </section>
+
+  <section>
+    <h2>If something goes wrong</h2>
+    <dl>
+      <dt>The app shows an error</dt><dd>Press <b>Ask Claude to fix this</b>. Claude gets the error and fixes it.</dd>
+      <dt>“Reconnected”</dt><dd>Claude had stopped and was started again where it left off. Carry on.</dd>
+      <dt>“not backed up”</dt><dd>By your app's name: your latest work hasn't reached GitHub yet. Studio keeps trying by itself, usually because the internet was down.</dd>
+      <dt>Buttons wait</dt><dd>Keep, Discard and the others wait while Claude is working, so nothing gets mixed up. Let it finish.</dd>
+      <dt>Not sure?</dt><dd>Switch to <b>Ask</b> and ask Claude, in your own words. Your app is also saved privately on GitHub, so the person who set Studio up can always look at it with you.</dd>
+    </dl>
+  </section>
+
+  <section>
+    <h2>Your first ten minutes</h2>
+    <ol class="first">
+      <li><div>Type <code>studio up</code> in Terminal. The <b>Getting started</b> page appears in the middle, with three example ideas.</div></li>
+      <li><div>Open <b>See an example: a todo list</b> and add a couple of items, to get a feel for the app.</div></li>
+      <li><div>Switch to <b>Plan</b> and paste the first example, “Your app”, into the chat. Name the feature, answer Claude's questions, and read the plan.</div></li>
+      <li><div>Press <span class="btn b-plan">Build this</span> and watch it appear. Ask for changes until you like it.</div></li>
+      <li><div>Press <span class="btn b-keep">Keep</span>. That's version v3, and your app now opens from Applications.</div></li>
+    </ol>
+  </section>
+</main>
+<script>
+document.querySelectorAll('button.copy').forEach((button) => {
+  button.addEventListener('click', async () => {
+    const source = document.getElementById(button.dataset.copy);
+    try {
+      await navigator.clipboard.writeText(source.textContent);
+      button.textContent = 'Copied';
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents(source);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      button.textContent = 'Press ⌘C';
+    }
+    setTimeout(() => { button.textContent = 'Copy'; }, 2500);
+  });
+});
+
+// The `studio new` command, from the app's name (the rule install.sh and studio new keep) and an optional GitHub username.
+const appName = document.getElementById('app-name');
+const collaborator = document.getElementById('collaborator');
+const command = document.getElementById('new-cmd');
+const copyNew = document.getElementById('copy-new');
+const problem = document.getElementById('maker-problem');
+const update = () => {
+  const name = appName.value.trim().toLowerCase().replace(/\s+/g, '-');
+  const helper = collaborator.value.trim().replace(/^@/, '');
+  let issue = '';
+  if (!name) issue = "Give your app a name.";
+  else if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) issue = "The name can only have lowercase letters, numbers and dashes, and can't start with a dash.";
+  else if (helper && !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(helper)) issue = "That isn't a GitHub username: they have only letters, numbers and dashes.";
+  appName.setAttribute('aria-invalid', String(issue !== '' && !issue.startsWith("That isn't")));
+  collaborator.setAttribute('aria-invalid', String(issue.startsWith("That isn't")));
+  problem.textContent = issue;
+  problem.hidden = !issue;
+  copyNew.disabled = Boolean(issue);
+  command.textContent = issue ? 'studio new …' : `studio new ${name}${helper ? ` --collaborator ${helper}` : ''}`;
+};
+appName.addEventListener('input', update);
+collaborator.addEventListener('input', update);
+document.getElementById('maker').addEventListener('submit', (event) => event.preventDefault());
+update();
+</script>
+</body>
+</html>

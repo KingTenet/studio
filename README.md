@@ -2,6 +2,8 @@
 
 A harness for building one web app with Claude Code, a feature at a time, without needing to know git.
 
+**New here?** Read the [Getting Started guide](https://kingtenet.github.io/studio/) (`docs/index.html`): installing Studio, making your app, and building it one feature at a time.
+
 Studio runs in the browser at http://localhost:4000. The page has three columns:
 
 - **Feature and versions** (left): the feature being built, and the versions kept so far.
