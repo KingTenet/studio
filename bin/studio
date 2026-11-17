@@ -15,7 +15,13 @@
 # shell prompt (its command exited, or herdr restored it after a restart) runs its command again. After an
 # update the studio tab is restarted, so the new server code is the one running.
 #
+# `studio switch <app>` makes another app the one the studio works on (an app's name in ~/Studio, or its folder):
+# it waits for Claude to finish, points config.json's appDir at it, closes the tabs that run in the old app's
+# folder (reaper, claude, app) and runs `studio up`, which starts them again in the new one. Each app keeps its
+# own open feature, data snapshots and Claude conversation, so switching back carries on where it left off.
+#
 # Usage: studio up [--dry-run]   # --dry-run prints what each tab would run and changes nothing
+#        studio switch <app>
 #
 # Environment: STUDIO_HOME (default ~/.studio, holding config.json with the app's appDir and appPort),
 # STUDIO_PORT (the cockpit's port, default 4000), STUDIO_WHISPER_PORT (whisper-server's port, default 8178),
@@ -32,17 +38,76 @@ WHISPER_MODEL="${STUDIO_WHISPER_MODEL:-$HOME/.whisper/ggml-small.en.bin}"
 WORKSPACE="${STUDIO_WORKSPACE:-studio}"
 CONFIG="$STUDIO_HOME/config.json"
 
-usage() { echo "usage: studio up [--dry-run]" >&2; exit 2; }
-[ "${1:-}" = up ] || usage
+usage() { echo "usage: studio up [--dry-run]   or   studio switch <app>" >&2; exit 2; }
 DRY_RUN=false
-case "${2:-}" in
-  "") ;;
-  --dry-run) DRY_RUN=true ;;
+case "${1:-} ${2:-}" in
+  "up ") ;;
+  "up --dry-run") DRY_RUN=true ;;
+  switch\ ?*) [ $# -eq 2 ] || usage ;;
   *) usage ;;
 esac
 
 q() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
 config() { [ -f "$CONFIG" ] && jq -r "$1 // empty" "$CONFIG" || true; }
+
+# --- studio switch --------------------------------------------------------------------------------
+
+if [ "$1" = switch ]; then
+  case "$2" in
+    */*) target="$2" ;;
+    *) target="$HOME/Studio/$2" ;;
+  esac
+  if [ ! -d "$target/.git" ]; then
+    echo "There's no app at $target. Its name is its folder in ~/Studio: $(ls "$HOME/Studio" 2>/dev/null | paste -sd ' ' - || true)" >&2
+    exit 1
+  fi
+  target="$(cd "$target" && pwd -P)"
+  current="$(config .appDir)"
+  if [ -n "$current" ] && [ "$(cd "$current" 2>/dev/null && pwd -P)" = "$target" ]; then
+    echo "The studio is already working on $(basename "$target")."
+    exec "$0" up
+  fi
+
+  # The workspace's tabs that run in the app's folder, the reaper first so it can't start Claude again in the old one.
+  ws=""
+  herdr workspace list >/dev/null 2>&1 &&
+    ws=$(herdr workspace list | jq -r --arg label "$WORKSPACE" '.result.workspaces[] | select(.label == $label) | .workspace_id' | head -n1)
+  if [ -n "$ws" ]; then
+    claude_tab=$(herdr tab list --workspace "$ws" | jq -r '.result.tabs[] | select(.label == "claude") | .tab_id' | head -n1)
+    # A Build turn makes its checkpoint when it stops, so the switch waits for Claude to finish (or answer).
+    if [ -n "$claude_tab" ]; then
+      status=$(herdr pane list --workspace "$ws" | jq -r --arg tab "$claude_tab" '[.result.panes[] | select(.tab_id == $tab)][0].agent_status // "unknown"')
+      case "$status" in
+        working) echo "Claude is still working. Switch when it has finished." >&2; exit 1 ;;
+        blocked) echo "Claude is waiting for an answer in the chat. Switch when it has finished." >&2; exit 1 ;;
+      esac
+    fi
+  fi
+
+  [ -n "$current" ] && git -C "$current" rev-parse --verify -q develop >/dev/null &&
+    ! GIT_TERMINAL_PROMPT=0 git -C "$current" push --quiet origin develop 2>/dev/null &&
+    echo "⚠️  Couldn't push $(basename "$current")'s latest changes; they're pushed the next time you switch back."
+
+  mkdir -p "$STUDIO_HOME"
+  [ -f "$CONFIG" ] || echo '{}' >"$CONFIG"
+  jq --arg dir "$target" --arg name "$(basename "$target")" '.appDir = $dir | .name = $name' "$CONFIG" >"$CONFIG.tmp"
+  mv "$CONFIG.tmp" "$CONFIG"
+
+  if [ -n "$ws" ]; then
+    for name in reaper claude app; do
+      tab=$(herdr tab list --workspace "$ws" | jq -r --arg label "$name" '.result.tabs[] | select(.label == $label) | .tab_id' | head -n1)
+      [ -n "$tab" ] && herdr tab close "$tab" >/dev/null
+    done
+    # The new app's dev server needs the port the old one is letting go of.
+    port="$(config .appPort)"
+    for _ in $(seq 1 40); do
+      lsof -nP -iTCP:"${port:-4001}" -sTCP:LISTEN >/dev/null 2>&1 || break
+      sleep 0.25
+    done
+  fi
+  echo "The studio now works on $(basename "$target")."
+  exec "$0" up
+fi
 
 APP_DIR="$(config .appDir)"
 APP_DIR="${APP_DIR:-$HOME/Studio/my-app}"

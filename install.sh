@@ -230,7 +230,9 @@ fi
 
 step "The studio's settings, $STUDIO_HOME/config.json"
 if [ -f "$STUDIO_HOME/config.json" ]; then
-  ok "already there (left as it is): appDir is $(jq -r '.appDir // "not set"' "$STUDIO_HOME/config.json")"
+  configured=$(jq -r '.appDir // "not set"' "$STUDIO_HOME/config.json")
+  ok "already there (left as it is): appDir is $configured"
+  [ "$configured" = "$APP_DIR" ] || echo "    To work on $APP_NAME instead, run: studio switch $APP_NAME"
 else
   mkdir -p "$STUDIO_HOME"
   jq -n --arg dir "$APP_DIR" --arg name "$APP_NAME" '{ appDir: $dir, name: $name, appPort: 4001 }' >"$STUDIO_HOME/config.json"
