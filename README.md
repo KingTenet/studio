@@ -16,11 +16,13 @@ The app lives in its own repo, next to this one (`~/Studio/<app>`). Studio keeps
 
 ## Set it up
 
-Once per Mac, from a checkout of this repo next to where your apps will go (`~/Studio/studio`):
+Once per Mac, paste this into Terminal (no git or GitHub account needed beforehand):
 
 ```sh
-./install.sh --app my-app --collaborator <your GitHub user>
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/KingTenet/studio/main/bootstrap.sh)" -- --app my-app --collaborator <your GitHub user>
 ```
+
+`bootstrap.sh` gets git if the Mac has none (Homebrew's installer brings Apple's command-line tools), clones this repo into `~/Studio/studio` (or updates it), and runs `install.sh` with the arguments after `--`. Use the `bash -c "$(curl …)"` form, not `curl … | bash`: through a pipe, `install.sh`'s questions would read the script instead of your answers. From an existing checkout, `./install.sh …` does the same without the first two steps.
 
 It installs Homebrew if needed, then herdr, Node, pnpm, `gh`, whisper-cpp (and its model, in `~/.whisper`), Claude Code and Chrome; logs into GitHub and Claude with your accounts; lets herdr see Claude's sessions (`herdr integration install claude`); asks for your name and email for git if they aren't set; links `studio` into `~/.local/bin` (added to the PATH in `~/.zprofile`); and builds the cockpit. With `--app` it then runs `studio new` for that app (below); without it, no app is made. Running it again is safe: finished steps are skipped and your apps and `config.json` are never written over.
 
