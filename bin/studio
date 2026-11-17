@@ -419,29 +419,31 @@ fi
 tab_id() { herdr tab list --workspace "$ws" | jq -r --arg label "$1" '.result.tabs[] | select(.label == $label) | .tab_id' | head -n1; }
 tab_pane() { herdr pane list --workspace "$ws" | jq -r --arg tab "$1" '[.result.panes[] | select(.tab_id == $tab)][0].pane_id'; }
 at_prompt() { herdr pane process-info --pane "$1" | jq -e '.result.process_info | .foreground_process_group_id == .shell_pid' >/dev/null; }
-port_busy() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
+# Connects rather than asking lsof, which only sees this user's processes: another user on this Mac (with their own
+# studio) holds the same localhost ports, and the studio would otherwise start nothing and open their cockpit.
+port_busy() { nc -z -G 1 127.0.0.1 "$1" >/dev/null 2>&1 || nc -z -G 1 ::1 "$1" >/dev/null 2>&1; }
+blocked=""
 
 start_in() {
   local name=$1 pane=$2 port
   port=$(tab_port "$name")
   if [ -n "$port" ] && port_busy "$port"; then
-    echo "⚠️  $name: something else is already using port $port, so it can't start" >&2
-    return
+    echo "⚠️  $name: port $port is already in use (maybe by another user's studio on this Mac), so it can't start" >&2
+    blocked="$blocked $name"
+    return 1
   fi
   herdr pane run "$pane" "$(tab_command "$name")" >/dev/null
 }
 
 for name in $TABS; do
   if [ "$name" = claude ] && [ -n "$first" ]; then
-    start_in claude "$first"
-    echo "claude: started"
+    start_in claude "$first" && echo "claude: started"
     continue
   fi
   tab=$(tab_id "$name")
   if [ -z "$tab" ]; then
     pane=$(herdr tab create --workspace "$ws" --cwd "$(tab_cwd "$name")" --label "$name" --no-focus "${ENV_ARGS[@]}" $(tab_env "$name") | jq -r '.result.root_pane.pane_id')
-    start_in "$name" "$pane"
-    echo "$name: started"
+    start_in "$name" "$pane" && echo "$name: started"
     continue
   fi
   pane=$(tab_pane "$tab")
@@ -453,8 +455,7 @@ for name in $TABS; do
     done
   fi
   if at_prompt "$pane"; then
-    start_in "$name" "$pane"
-    echo "$name: started again"
+    start_in "$name" "$pane" && echo "$name: started again"
   else
     echo "$name: already running"
   fi
@@ -463,6 +464,12 @@ done
 # --- the cockpit ----------------------------------------------------------------------------------
 
 URL="http://localhost:$STUDIO_PORT"
+if [ -n "$blocked" ]; then
+  echo "Not everything started (blocked:$blocked). If another user on this Mac has the studio running, stop it there" >&2
+  echo "with \`herdr server stop\`, then run \`studio up\` again." >&2
+  # What answers on the cockpit's port isn't this studio, so don't open it.
+  case " $blocked " in *" studio "*) exit 1 ;; esac
+fi
 for _ in $(seq 1 60); do
   curl -sf -o /dev/null "$URL/" && break
   sleep 0.25
