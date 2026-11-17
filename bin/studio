@@ -54,6 +54,13 @@ STUDIO_DIR="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
 export STUDIO_DIR
 # pnpm can come from Corepack, which otherwise stops to ask before downloading it.
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+# Homebrew's tools (herdr, gh, node, jq…), also in a Terminal window opened before the installer put Homebrew on the
+# PATH. Added at the end, so whatever is on the PATH already comes first.
+if ! command -v brew >/dev/null; then
+  for dir in /opt/homebrew /usr/local; do
+    [ -x "$dir/bin/brew" ] && { PATH="$PATH:$dir/bin:$dir/sbin"; break; }
+  done
+fi
 export STUDIO_HOME="${STUDIO_HOME:-$HOME/.studio}"
 export STUDIO_PORT="${STUDIO_PORT:-4000}"
 export STUDIO_WHISPER_PORT="${STUDIO_WHISPER_PORT:-8178}"
@@ -104,6 +111,7 @@ if [ "$1" = new ]; then
   case "$name" in
     ""|*[!a-z0-9-]*|-*) echo "The app's name can only have lowercase letters, numbers and dashes, like my-app." >&2; exit 2 ;;
   esac
+  command -v gh >/dev/null || { echo "Studio can't find gh, GitHub's command. Run ./install.sh in $STUDIO_DIR first." >&2; exit 1; }
   gh auth status >/dev/null 2>&1 || { echo "GitHub isn't logged in. Run ./install.sh in $STUDIO_DIR first." >&2; exit 1; }
   owner=$(gh api user --jq .login)
   repo="$owner/$name"

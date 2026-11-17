@@ -166,3 +166,16 @@ test('a step that fails says which, instead of studio stopping without a word', 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("studio finds Homebrew's tools itself, in a Terminal window opened before the installer put Homebrew on the PATH", { skip: !['/opt/homebrew', '/usr/local'].some((dir) => fs.existsSync(`${dir}/bin/brew`) && fs.existsSync(`${dir}/bin/gh`)) && 'no Homebrew gh on this Mac' }, () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'studio-brewpath-')));
+  try {
+    // Only the system's own folders, and a home with no GitHub login, so gh can't do anything.
+    const result = spawnSync(STUDIO, ['new', 'test-app'], { encoding: 'utf8', env: { HOME: root, PATH: '/usr/bin:/bin:/usr/sbin:/sbin', STUDIO_HOME: path.join(root, '.studio') } });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /GitHub isn't logged in/, 'gh was found, and says it has no login');
+    assert.doesNotMatch(result.stderr, /can't find gh/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
