@@ -125,3 +125,41 @@ test('a download cut off part way runs nothing', () => {
     t.cleanup();
   }
 });
+
+test('in a terminal, it ends in a fresh login shell, so the window it ran in finds the studio command', () => {
+  const t = setup();
+  try {
+    const shell = path.join(t.root, 'fresh-shell');
+    fs.writeFileSync(shell, '#!/bin/sh\necho "fresh shell: $*"\n', { mode: 0o755 });
+    // A terminal for the bootstrap, as Terminal gives it (pty.spawn never returns on macOS once the child has gone).
+    const inTerminal = [
+      'import os, pty, select, subprocess, sys',
+      'master, slave = pty.openpty()',
+      'child = subprocess.Popen(sys.argv[1:], stdin=slave, stdout=slave, stderr=slave)',
+      'os.close(slave)',
+      'os.write(master, sys.stdin.buffer.read())',
+      'while True:',
+      '    ready, _, _ = select.select([master], [], [], 0.1)',
+      '    if ready:',
+      '        try:',
+      '            chunk = os.read(master, 4096)',
+      '        except OSError:',
+      '            chunk = b""',
+      '        sys.stdout.buffer.write(chunk)',
+      '        if chunk: continue',
+      '    if child.poll() is not None and not ready: break',
+      '    if ready and not chunk: break',
+      'sys.exit(child.wait())',
+    ].join('\n');
+    const result = spawnSync('python3', ['-I', '-c', inTerminal, '/bin/bash', '-c', BOOTSTRAP], {
+      timeout: 30_000,
+      encoding: 'utf8',
+      input: 'Her Name\n',
+      env: { ...process.env, ...IDENTITY, HOME: t.home, SHELL: shell, STUDIO_REPO_URL: t.upstream, STUDIO_DIR: '' },
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /install\.sh 1 args:[\s\S]*Starting a fresh Terminal session here[\s\S]*fresh shell: -l/);
+  } finally {
+    t.cleanup();
+  }
+});

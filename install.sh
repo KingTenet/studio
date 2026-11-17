@@ -200,7 +200,7 @@ trap - ERR
 if [ -n "$APP_NAME" ]; then
   cat <<EOF
 
-All set. To start the studio, open a new Terminal window and type:
+All set. To start the studio, type:
 
     studio up
 
@@ -212,12 +212,14 @@ EOF
 else
   cat <<EOF
 
-All set. To make an app and start the studio, open a new Terminal window and type:
+All set. To make your app, type studio new and a name for it, for example:
 
-    studio new <name>
+    studio new my-app
+
+The name can have lowercase letters, numbers and dashes. Then start the studio with:
+
     studio up
 
-The name can have lowercase letters, numbers and dashes, like my-app. The studio opens in the browser at
-http://localhost:4000.
+It opens in the browser at http://localhost:4000.
 EOF
 fi

@@ -6,7 +6,8 @@
 # (add ` -- --app my-app` to make an app too: everything after `--` goes to install.sh). It gets git if this Mac has
 # none (Homebrew's installer brings Apple's command-line tools, and Homebrew is needed next anyway), copies Studio into
 # ~/Studio/studio (or updates the copy there), then runs its install.sh. No GitHub account is needed for this part:
-# install.sh logs into GitHub later, in the browser.
+# install.sh logs into GitHub later, in the browser. Last, in a terminal, it starts a fresh login shell in its place,
+# so the window it ran in finds the `studio` command without opening a new one.
 #
 # Run as `bash -c "$(curl …)"`, not `curl … | bash`: install.sh asks questions, and through a pipe it would read the
 # rest of this script instead of the answers. Everything is in main(), called on the last line, so a download cut off
@@ -43,7 +44,15 @@ main() {
     GIT_TERMINAL_PROMPT=0 git clone --quiet "$repo" "$dir"
   fi
 
-  exec "$dir/install.sh" ${@+"$@"}
+  "$dir/install.sh" ${@+"$@"}
+
+  # A Terminal window keeps the PATH it opened with, so `studio` (and what Homebrew installed) isn't found in it yet.
+  # A fresh login shell in its place reads ~/.zprofile, so they work here straight away.
+  if [ -t 0 ] && [ -t 1 ]; then
+    echo
+    echo "(Starting a fresh Terminal session here, so the studio command works.)"
+    exec "${SHELL:-/bin/zsh}" -l
+  fi
 }
 
 main ${@+"$@"}

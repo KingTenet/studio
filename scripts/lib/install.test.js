@@ -177,7 +177,7 @@ test('without --app it sets up the Mac but makes no app, and `studio new` makes 
   const { dirs, env, install, log, git, app } = setup();
   const run = install([], 'Test User\nuser@example.com\n');
   assert.equal(run.status, 0, run.stdout + run.stderr);
-  assert.match(run.stdout, /studio new <name>/);
+  assert.match(run.stdout, /studio new my-app/);
   assert.ok(!fs.existsSync(path.join(dirs.home, 'Studio')));
   assert.ok(!fs.existsSync(path.join(dirs.home, '.studio', 'config.json')));
   assert.ok(!fs.existsSync(path.join(dirs.home, 'Applications')));
