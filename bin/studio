@@ -23,7 +23,7 @@
 # `studio run [<app>]` runs the app for real, apart from the studio (default: the app config.json names). It runs
 # the newest version she kept (vN), from its own copy in ~/Studio/.live/<app>/code (a git worktree, detached at the
 # tag), on its own data in ~/Studio/.live/<app>/data, which nothing in the studio ever rewinds, at
-# http://localhost:4100, in the background (its output in ~/Studio/.live/<app>/app.log). Run again, it opens the
+# http://localhost:5001, in the background (its output in ~/Studio/.live/<app>/app.log). Run again, it opens the
 # browser, and when she has kept a newer version since, moves to it first: it stops the running one, copies the
 # database to ~/Studio/.live/<app>/backups/ and checks out the new tag, whose migrations then run on her data.
 # It only ever moves forward. install.sh puts an app in ~/Applications that runs it, so she needn't use a terminal.
@@ -36,7 +36,7 @@
 # STUDIO_PORT (the cockpit's port, default 4000), STUDIO_WHISPER_PORT (whisper-server's port, default 8178),
 # STUDIO_WHISPER_MODEL (its model, default ~/.whisper/ggml-small.en.bin), STUDIO_WORKSPACE (the workspace's label, default studio),
 # STUDIO_CLAUDE_CMD (run in place of claude, for trying this out), STUDIO_NO_OPEN=1 (don't open the browser),
-# STUDIO_LIVE_PORT (where `studio run` serves the app, default 4100).
+# STUDIO_LIVE_PORT (where `studio run` serves the app, default 5001; not 5000, which AirPlay Receiver holds).
 set -euo pipefail
 
 STUDIO_DIR="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
@@ -138,7 +138,7 @@ if [ "$1" = run ]; then
   name="$(basename "$app")"
   LIVE="$HOME/Studio/.live/$name"
   CODE="$LIVE/code"
-  PORT="${STUDIO_LIVE_PORT:-4100}"
+  PORT="${STUDIO_LIVE_PORT:-5001}"
   URL="http://localhost:$PORT"
   tag=$(git -C "$app" tag --list 'v*' --sort=-v:refname | head -n1)
   [ -n "$tag" ] || { echo "$name has no versions yet. Keep a feature first." >&2; exit 1; }
