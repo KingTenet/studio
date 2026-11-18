@@ -147,3 +147,60 @@ test('switch to the app it already works on just runs up', async (t) => {
   assert.match(result.stdout, /already working on old-app/);
   assert.deepEqual(s.herdr().closed, []);
 });
+
+/** Someone else's Studio app, outside ~/Studio: main tagged v1 and v2, and develop a checkpoint ahead (work they haven't kept). */
+const theirApp = (root, { branch = 'main' } = {}) => {
+  const dir = path.join(root, 'their-app');
+  fs.mkdirSync(dir);
+  const commit = (message) => git(dir, '-c', 'user.name=her', '-c', 'user.email=her@example.com', 'commit', '-q', '--allow-empty', '-m', message);
+  git(dir, 'init', '-q', '-b', branch);
+  commit('Getting Started');
+  git(dir, '-c', 'user.name=her', '-c', 'user.email=her@example.com', 'tag', '-a', 'v1', '-m', 'v1 Getting Started');
+  commit('Writing hub');
+  git(dir, '-c', 'user.name=her', '-c', 'user.email=her@example.com', 'tag', '-a', 'v2', '-m', 'v2 Writing hub');
+  git(dir, 'checkout', '-q', '-b', 'develop');
+  commit('Checkpoint: half-built calendar');
+  return dir;
+};
+
+test('studio clone copies their app into ~/Studio from their latest version, keeps it from pushing back, and switches to it', async (t) => {
+  const s = await setup(t);
+  const theirs = theirApp(path.dirname(s.home));
+  const result = await s.run('clone', theirs, 'writing-hub');
+  assert.equal(result.status, 0, result.stderr);
+  const dir = path.join(s.home, 'Studio', 'writing-hub');
+  assert.match(result.stdout, /Made writing-hub from v2\./);
+  assert.match(result.stdout, /work in progress \(not kept yet\) is on upstream\/develop/);
+  assert.match(result.stdout, /Nothing is pushed back/);
+  assert.equal(s.config().appDir, dir, 'switched to it');
+  assert.equal(execFileSync('git', ['-C', dir, 'remote'], { encoding: 'utf8' }).trim(), 'upstream', 'no origin, so the studio pushes nothing');
+  const sha = (ref) => execFileSync('git', ['-C', dir, 'rev-parse', ref], { encoding: 'utf8' }).trim();
+  assert.equal(sha('develop'), sha('v2^{}'), 'from their latest kept version');
+  assert.equal(sha('main'), sha('v2^{}'));
+  assert.equal(execFileSync('git', ['-C', dir, 'branch', '--show-current'], { encoding: 'utf8' }).trim(), 'develop');
+});
+
+test('studio clone names the app after the repo, and refuses a name in use or a repo that is not a Studio app', async (t) => {
+  const s = await setup(t);
+  const root = path.dirname(s.home);
+  const theirs = theirApp(root);
+  let result = await s.run('clone', theirs);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(fs.existsSync(path.join(s.home, 'Studio', 'their-app')));
+  result = await s.run('clone', theirs);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /already there\. Switch to it with: studio switch their-app/);
+
+  const other = path.join(root, 'not-studio');
+  fs.mkdirSync(other);
+  git(other, 'init', '-q', '-b', 'master');
+  git(other, '-c', 'user.name=x', '-c', 'user.email=x@x', 'commit', '-q', '--allow-empty', '-m', 'x');
+  result = await s.run('clone', other);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /has no main branch, so it isn't a Studio app/);
+  assert.ok(!fs.existsSync(path.join(s.home, 'Studio', 'not-studio')), 'nothing left behind');
+
+  result = await s.run('clone', path.join(root, 'nowhere'));
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /There's no app at/);
+});

@@ -38,6 +38,8 @@
 # Usage: studio up [--dry-run]   # --dry-run prints what each tab would run and changes nothing
 #        studio new <app> [--collaborator <github user>]
 #        studio switch <app>
+#        studio clone <source> [<name>]   # someone else's Studio app (a GitHub URL, owner/repo, or a local folder with
+#                                         # its git repo) into ~/Studio/<name>, then switches to it; nothing is pushed back
 #        studio run [<app>]
 #        studio stop [<app>]      # stops the app running for real (studio run)
 #        studio logs              # puts the studio's logs in one zip on the Desktop, to send to whoever helps
@@ -77,13 +79,14 @@ WHISPER_MODEL="${STUDIO_WHISPER_MODEL:-$HOME/.whisper/ggml-small.en.bin}"
 WORKSPACE="${STUDIO_WORKSPACE:-studio}"
 CONFIG="$STUDIO_HOME/config.json"
 
-usage() { echo "usage: studio up [--dry-run]   or   studio new <app> [--collaborator <github user>]   or   studio switch <app>   or   studio run [<app>]   or   studio stop [<app>]   or   studio logs   or   studio down   or   studio restart" >&2; exit 2; }
+usage() { echo "usage: studio up [--dry-run]   or   studio new <app> [--collaborator <github user>]   or   studio switch <app>   or   studio clone <source> [<name>]   or   studio run [<app>]   or   studio stop [<app>]   or   studio logs   or   studio down   or   studio restart" >&2; exit 2; }
 DRY_RUN=false
 case "${1:-} ${2:-}" in
   "up ") ;;
   "up --dry-run") DRY_RUN=true ;;
   new\ ?*) ;;
   switch\ ?*) [ $# -eq 2 ] || usage ;;
+  clone\ ?*) [ $# -le 3 ] || usage ;;
   run\ *) [ $# -le 3 ] || usage ;;
   stop\ *) [ $# -le 2 ] || usage ;;
   "logs ") ;;
@@ -303,6 +306,53 @@ if [ "$1" = logs ]; then
   echo "Saved $out"
   echo "Send that file to whoever is helping you. It holds the studio's logs, not your messages to Claude."
   exit 0
+fi
+
+# --- studio clone ---------------------------------------------------------------------------------
+
+if [ "$1" = clone ]; then
+  source="$2"
+  # A local folder with a git repo, a URL, or GitHub's owner/repo.
+  if [ -d "$source/.git" ]; then
+    from="$(cd "$source" && pwd -P)"
+  elif [[ "$source" =~ ^(https?://|git@|ssh://) ]]; then
+    from="$source"
+  elif [[ "$source" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && [ ! -e "$source" ]; then
+    from="https://github.com/$source.git"
+  else
+    echo "There's no app at $source: give a GitHub URL, owner/repo, or a folder with a git repository." >&2
+    exit 1
+  fi
+  name="${3:-$(basename "${from%/}" .git | tr '[:upper:]' '[:lower:]')}"
+  case "$name" in
+    ""|*[!a-z0-9-]*|-*) echo "\"$name\" can't be an app's name. Give one: studio clone $source <name> (lowercase letters, numbers and dashes)." >&2; exit 2 ;;
+  esac
+  dir="$HOME/Studio/$name"
+  if [ -e "$dir" ]; then
+    echo "$dir is already there. Switch to it with: studio switch $name, or clone under another name: studio clone $source <name>" >&2
+    exit 1
+  fi
+  mkdir -p "$HOME/Studio"
+  echo "Copying ${from} into ${dir}…"
+  GIT_TERMINAL_PROMPT=0 git clone --quiet "$from" "$dir"
+  # Theirs stays theirs: the source is "upstream", and with no origin the studio pushes nothing anywhere.
+  git -C "$dir" remote rename origin upstream
+  if ! git -C "$dir" rev-parse -q --verify refs/remotes/upstream/main >/dev/null; then
+    rm -rf "$dir"
+    echo "$from has no main branch, so it isn't a Studio app." >&2
+    exit 1
+  fi
+  git -C "$dir" checkout --quiet -B main upstream/main
+  # From their latest kept version; work they haven't kept yet stays on upstream/develop.
+  git -C "$dir" checkout --quiet -B develop main
+  latest=$(git -C "$dir" tag --list 'v*' --sort=-v:refname | head -n1)
+  echo "Made $name from ${latest:-its main branch}."
+  if git -C "$dir" rev-parse -q --verify refs/remotes/upstream/develop >/dev/null &&
+    [ -n "$(git -C "$dir" rev-list main..upstream/develop 2>/dev/null)" ]; then
+    echo "Their work in progress (not kept yet) is on upstream/develop; the studio starts from ${latest:-main}."
+  fi
+  echo "Nothing is pushed back to $from. Its data isn't in git, so the app starts with an empty database."
+  exec "$0" switch "$name"
 fi
 
 # --- studio switch --------------------------------------------------------------------------------

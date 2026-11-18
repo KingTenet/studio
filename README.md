@@ -36,6 +36,8 @@ studio new <app> [--collaborator <GitHub user>]
 
 It creates the app in `~/Studio/<app>` from `template/app.bundle` (versions v1 and v2, with `develop` = `main`), or clones it if your GitHub account already has that repo (a new Mac); makes it a private GitHub repo with everything pushed and invites the collaborator; puts `~/Applications/<app>.app` there, which runs `studio run <app>` with one click; and makes it the studio's app (writing `~/.studio/config.json` for the first one, `studio switch <app>` after that). Running it again skips what's done.
 
+To look at or work on someone else's Studio app, `studio clone <GitHub URL | owner/repo | folder> [<name>]` copies it into `~/Studio/<name>` (named after the repo by default), starting from their latest kept version, and switches the studio to it. The source is kept as the `upstream` remote and there's no `origin`, so nothing is ever pushed back to it; their unkept work stays on `upstream/develop`. Their data isn't in git, so the app starts with an empty database.
+
 `template/app.bundle` is the starter app, made from the template repo by `scripts/update-template-bundle.sh <template repo>`. Run that again after changing the template, and commit the new bundle.
 
 ## Start it
