@@ -1608,6 +1608,17 @@ const restoreVersionNow = async (req, res) => {
 
 // --- the cockpit page and the API --------------------------------------------------------
 
+// When an open cockpit page last asked for the state (0: none since the server started).
+let pageSeenAt = 0;
+/** Which build of the cockpit page is on disk: its modified time. */
+const cockpitBuild = () => {
+  try {
+    return String(Math.round(statSync(path.join(WEB_DIST, 'cockpit.html')).mtimeMs));
+  } catch {
+    return '';
+  }
+};
+
 const cockpitPage = () => {
   const file = path.join(WEB_DIST, 'cockpit.html');
   if (!existsSync(file)) {
@@ -1634,7 +1645,15 @@ const handle = async (req, res) => {
     return;
   }
   if (req.method === 'GET' && url.pathname === '/_env/api/state') {
+    // An open cockpit asks every second: `studio up` uses that to not open another tab. The build it's served comes too, so
+    // an open page reloads itself after `studio up` has rebuilt it.
+    pageSeenAt = Date.now();
+    res.setHeader('X-Studio-Build', cockpitBuild());
     sendJson(res, 200, currentState());
+    return;
+  }
+  if (req.method === 'GET' && url.pathname === '/_env/api/page-seen') {
+    sendJson(res, 200, { seenMsAgo: pageSeenAt ? Date.now() - pageSeenAt : null });
     return;
   }
   if (req.method === 'GET' && url.pathname === '/_env/api/app/log') {

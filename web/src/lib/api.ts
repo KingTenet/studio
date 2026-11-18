@@ -16,10 +16,18 @@ const post = (path: string, body: unknown, id = newActionId()) =>
   fetch(API + path, { method: 'POST', headers: { ...HEADERS, 'X-Studio-Action-Id': id, 'X-Studio-Source': actionSource }, body: JSON.stringify(body) })
 
 /** The server's view of the app and its Claude sessions, or null while it isn't answering. */
+// The build of the cockpit page this tab loaded: when the server says it serves another (`studio up` rebuilt it), the tab
+// reloads itself, so the newest version shows without opening another tab.
+let loadedBuild: string | null = null
 export const getState = async (query = ''): Promise<ControlState | null> => {
   try {
     const res = await fetch(API + '/state' + query)
     if (!res.ok) throw new Error(String(res.status))
+    const build = res.headers.get('X-Studio-Build')
+    if (build) {
+      if (loadedBuild && build !== loadedBuild) location.reload()
+      loadedBuild = build
+    }
     return (await res.json()) as ControlState
   } catch {
     return null

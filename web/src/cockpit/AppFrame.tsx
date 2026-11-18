@@ -163,7 +163,7 @@ export const AppFrame = ({ label, appUrl, running, crashed = false, renderError,
         >
           <RotateCw />
         </Button>
-        <Button size="sm" variant="outline" title={tip('Open this page of the app in its own tab')} onClick={() => window.open(appUrl + (path ?? src ?? '/'), '_blank', 'noopener')}>
+        <Button size="sm" variant="outline" title={tip('Open this page of the app in its own tab')} onClick={() => window.open(appUrl + (path ?? src ?? '/'), 'studio-app')}>
           open full <ExternalLink />
         </Button>
       </div>

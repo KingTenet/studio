@@ -643,4 +643,18 @@ for _ in $(seq 1 60); do
 done
 curl -sf -o /dev/null "$URL/" || echo "⚠️  The cockpit isn't answering at $URL yet; see the studio tab in herdr." >&2
 echo "Studio is at $URL"
-[ -n "${STUDIO_NO_OPEN:-}" ] || open "$URL"
+# A cockpit already open in a tab asks the server every second: then that tab is used (it reloads itself if the page was
+# rebuilt), rather than opening another.
+open_cockpit() {
+  [ -z "${STUDIO_NO_OPEN:-}" ] || return 0
+  for _ in $(seq 1 16); do
+    seen=$(curl -sf "$URL/_env/api/page-seen" | jq -r '.seenMsAgo // empty' 2>/dev/null || true)
+    if [ -n "$seen" ] && [ "$seen" -lt 3000 ]; then
+      echo "(It's already open in your browser.)"
+      return 0
+    fi
+    sleep 0.25
+  done
+  open "$URL"
+}
+open_cockpit
