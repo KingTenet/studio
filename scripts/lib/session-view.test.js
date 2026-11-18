@@ -126,6 +126,10 @@ test('paneInput: the text between the rules after ❯, ignoring suggestions and 
 test('paneInput: a prompt option after a rule is not input', () => {
   assert.equal(paneInput([RULE, '❯ 1. Yes', '  2. No', RULE].join('\n')), '');
   assert.equal(hasInputBox([RULE, '❯ ', RULE].join('\n')), true, 'an empty box is still a box');
+  // Claude Code colours a slash command it knows: the plain reading leaves it out, `everything` keeps it.
+  const effort = [RULE, '❯ \x1b[38;5;141m/effort\x1b[39m medium', RULE].join('\n');
+  assert.equal(paneInput(effort), 'medium');
+  assert.equal(paneInput(effort, { everything: true }), '/effort medium');
   assert.equal(hasInputBox(['Resuming conversation…', ''].join('\n')), false, 'not drawn yet');
 });
 

@@ -1324,6 +1324,8 @@ const syncEffort = (appDir) => {
 
 /** syncEffort's work, for a caller that holds the chat pane's lock already. */
 const effortSyncing = new Set();
+const effortTries = new Map();
+const MAX_EFFORT_TRIES = 3;
 const syncEffortNow = async (appDir) => {
   let key = null;
   try {
@@ -1336,8 +1338,12 @@ const syncEffortNow = async (appDir) => {
     if (effortTyped.get(key) === level || effortSyncing.has(key) || !hasInputBox(screen) || paneInput(screen)) return false;
     effortSyncing.add(key);
     const typed = await typeEffort(chat.paneId, `/effort ${level}`);
-    logSession({ event: typed ? 'typed' : 'effort-not-typed', pane: chat.paneId, session: chat.sessionId, text: `/effort ${level}` });
-    if (typed) effortTyped.set(key, level);
+    const tries = typed ? 0 : (effortTries.get(`${key} ${level}`) ?? 0) + 1;
+    effortTries.set(`${key} ${level}`, tries);
+    // Never round and round: after a few tries that didn't take, that level is left for this session.
+    const givenUp = tries >= MAX_EFFORT_TRIES;
+    logSession({ event: typed ? 'typed' : givenUp ? 'effort-given-up' : 'effort-not-typed', pane: chat.paneId, session: chat.sessionId, text: `/effort ${level}` });
+    if (typed || givenUp) effortTyped.set(key, level);
     return typed;
   } catch {
     return false;
@@ -1365,7 +1371,7 @@ const until = async (check, ms, step = 200) => {
  * presses Enter. If it never shows whole (Claude Code wasn't taking keys yet), what did land is cleared and it returns false,
  * for the next sync to try again, rather than leaving part of it in the box. True once Enter is pressed.
  */
-const typeEffort = async (paneId, command, { read = () => paneInput(paneScreen(paneId)), type = () => execFileSync('herdr', ['pane', 'send-text', paneId, command], { stdio: 'ignore', timeout: 5000 }), keys = (...k) => execFileSync('herdr', ['pane', 'send-keys', paneId, ...k], { stdio: 'ignore', timeout: 5000 }), wait = 2000, step = 100 } = {}) => {
+const typeEffort = async (paneId, command, { read = () => paneInput(paneScreen(paneId), { everything: true }), type = () => execFileSync('herdr', ['pane', 'send-text', paneId, command], { stdio: 'ignore', timeout: 5000 }), keys = (...k) => execFileSync('herdr', ['pane', 'send-keys', paneId, ...k], { stdio: 'ignore', timeout: 5000 }), wait = 2000, step = 100 } = {}) => {
   type();
   for (let waited = 0; waited <= wait; waited += step) {
     if (read() === command) {

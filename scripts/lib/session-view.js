@@ -260,15 +260,19 @@ const hasInputBox = (screen) => {
   return plain.some((line, i) => i > 0 && INPUT_START.test(line) && RULE.test(plain[i - 1]));
 };
 
-/** Text typed into Claude's input box but not sent, from a pane's ANSI screen ('' when empty). */
-const paneInput = (ansiScreen) => {
+/**
+ * Text typed into Claude's input box but not sent, from a pane's ANSI screen ('' when empty). Coloured text is left out, so
+ * a dim suggestion isn't taken for typing; with `everything`, it's kept: Claude Code colours a slash command it knows
+ * (`/effort` in `/effort medium`), which the plain reading would leave out.
+ */
+const paneInput = (ansiScreen, { everything = false } = {}) => {
   const lines = ansiScreen.replace(/\r/g, '').split('\n');
   const plain = lines.map(stripAnsi);
   for (let i = plain.length - 1; i > 0; i--) {
     if (INPUT_START.test(plain[i]) && RULE.test(plain[i - 1])) {
       const typed = [];
       for (let j = i; j < plain.length && !RULE.test(plain[j]); j++) {
-        const text = unstyledText(lines[j]).replace(/ /g, ' ');
+        const text = (everything ? plain[j] : unstyledText(lines[j])).replace(/ /g, ' ');
         typed.push(j === i ? text.replace(/^❯\s?/, '') : text.replace(/^ {2}/, ''));
       }
       return typed.join('\n').trim();
