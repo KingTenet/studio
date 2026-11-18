@@ -11,7 +11,7 @@ const path = require('node:path');
 // The server keeps its logs under STUDIO_HOME, read once at load: point it at a throwaway folder before loading it.
 process.env.STUDIO_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-server-test-'));
 
-const { typeEffort, typeInto, clearInput, serveVadFile, appAgents, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats } = require('./studio-server');
+const { withPaneLock, typeEffort, typeInto, clearInput, serveVadFile, appAgents, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats } = require('./studio-server');
 
 test('isLocalHost: localhost and 127.0.0.1 only, so a rebound DNS name is refused', () => {
   assert.ok(isLocalHost('localhost'));
@@ -84,6 +84,25 @@ test('answerFreeText: arrows to the free-text option, clears it, types, and pres
   const gone = laggyQuestion('1', '');
   assert.match(await answerFreeText('2', 'x', gone.read, gone.keys, gone.type, 2000), /no such text option/);
   assert.match(await answerFreeText('4', 'x', () => 'no question here', gone.keys, gone.type, 2000), /no such text option/);
+});
+
+test('withPaneLock: what is typed into one pane runs one at a time, in order, even when one fails; other panes go on meanwhile', async () => {
+  const events = [];
+  const task = (name, ms, fail = false) => async () => {
+    events.push(`${name} start`);
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    events.push(`${name} end`);
+    if (fail) throw new Error(name);
+    return name;
+  };
+  const effort = withPaneLock('w1:p1', task('effort', 30, true));
+  const message = withPaneLock('w1:p1', task('message', 5));
+  const other = withPaneLock('w1:p2', task('other', 5));
+  await assert.rejects(effort, /effort/);
+  assert.equal(await message, 'message');
+  assert.equal(await other, 'other');
+  assert.deepEqual(events.filter((event) => !event.startsWith('other')), ['effort start', 'effort end', 'message start', 'message end']);
+  assert.ok(events.indexOf('other end') < events.indexOf('effort end'), 'another pane does not wait');
 });
 
 test('typeEffort: Enter only once the box shows the whole command; part of it showing is cleared, for the next try', async () => {

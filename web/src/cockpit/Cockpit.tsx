@@ -107,7 +107,6 @@ const Layout = ({ selected, setSelected, adopt, focusMessage }: LayoutProps) => 
   // and back to the app when a Build turn ends. An unsent drawing keeps the pane where it is (lib/plan.ts).
   const middle = () => ({ source, drawInk: ink.attached, artifactInk: artifactInk.attached })
   const onPublished = (artifact: ArtifactInfo) => {
-    if (artifact.plan) setPlan({ name: artifact.plan, title: artifact.name, url: artifact.url, page: artifact.page ?? null, sessionId: artifact.latest.sessionId ?? null })
     const fromChat = !w?.agents?.some((agent) => agent.tab === 'Artifacts' && agent.sessionId === artifact.latest.sessionId)
     const { preview, show } = onPublish(middle(), fromChat)
     if (preview) setPreviewId(artifact.id)
@@ -218,7 +217,7 @@ const Layout = ({ selected, setSelected, adopt, focusMessage }: LayoutProps) => 
               />
             </div>
             <div className={source === 'artifacts' ? 'h-full' : 'hidden'}>
-              <ArtifactsPane label={LABEL} switcher={switcher} previewId={previewId} onPreview={(id) => (id ? previewArtifact(id) : setPreviewId(null))} onPublished={onPublished} onBuildPlan={sendForHer} onShowing={onShowing} onPick={onPick} onEscape={clearPicks} drawingRef={artifactDrawing} drawingAttached={artifactInk.attached} onDrawingChange={artifactInk.onChange} />
+              <ArtifactsPane label={LABEL} switcher={switcher} previewId={previewId} onPreview={(id) => (id ? previewArtifact(id) : setPreviewId(null))} onPublished={onPublished} onPlan={(artifact) => setPlan(artifact?.plan ? { name: artifact.plan, title: artifact.name, url: artifact.url, page: artifact.page ?? null, sessionId: artifact.latest.sessionId ?? null } : null)} onBuildPlan={sendForHer} onShowing={onShowing} onPick={onPick} onEscape={clearPicks} drawingRef={artifactDrawing} drawingAttached={artifactInk.attached} onDrawingChange={artifactInk.onChange} />
             </div>
             <div className={source === 'draw' ? 'h-full' : 'hidden'}>
               <DrawPane ref={drawing} active={source === 'draw'} switcher={switcher} attached={ink.attached} onChange={ink.onChange} />

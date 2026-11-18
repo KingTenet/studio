@@ -58,6 +58,15 @@ test('record: files a publish under its worktree with the page title, a version 
   assert.equal(fs.readFileSync(path.join(snap, 'data.json'), 'utf8'), '{"rows":[]}');
 });
 
+test("describe: the artifact list says which one is a plan, and for what, from its latest version, for the chat's Build this", () => {
+  record({ sessionId: 's1', cwd: repo, ts: 't1', input: { file_path: page('plan.html', 'The plan', '<meta name="studio-plan" content="Weekly planner">') }, response: URL_A });
+  record({ sessionId: 's1', cwd: repo, ts: 't2', input: { file_path: page('notes.html', 'Notes') }, response: URL_B });
+  const byId = Object.fromEntries(describe(repo).artifacts.map((artifact) => [artifact.id, artifact]));
+  assert.equal(byId['aaaa-1111'].plan, 'Weekly planner');
+  assert.equal(byId['aaaa-1111'].page, path.join(scratch, 'plan.html'));
+  assert.equal(byId['bbbb-2222'].plan, null);
+});
+
 test('record: a republish of the same artifact is its next version', () => {
   const file = page('a.html', 'A');
   record({ sessionId: 's1', cwd: repo, ts: 't1', input: { file_path: file }, response: URL_A });

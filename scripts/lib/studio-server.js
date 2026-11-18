@@ -797,16 +797,25 @@ const sendToSession = async (req, res) => {
     sendJson(res, 409, { error: 'The session is waiting on a prompt. Answer it first.' });
     return;
   }
-  const pending = paneInput(paneScreen(paneId));
-  if (pending) {
-    logSession({ event: 'blocked-by-input', pane: paneId, left: pending.slice(0, 80) });
-    sendJson(res, 409, { error: "Something typed in Claude's window wasn't sent. Clear it to send yours.", pending });
+  const refused = await withPaneLock(paneId, async () => {
+    // Typed before Claude's input box is drawn (Claude Code starting or resuming), part of it would be left behind.
+    if (!(await until(() => hasInputBox(paneScreen(paneId)), INPUT_BOX_WAIT_MS))) return { status: 409, error: 'Claude is still starting. Send your message again in a moment.' };
+    const pending = paneInput(paneScreen(paneId));
+    if (pending) {
+      logSession({ event: 'blocked-by-input', pane: paneId, left: pending.slice(0, 80) });
+      return { status: 409, error: "Something typed in Claude's window wasn't sent. Clear it to send yours.", pending };
+    }
+    if (context) notePageContext(paneId, context);
+    // The effort for the chat's mode first, so this message runs at it (typeEffort returns once /effort has run).
+    await syncEffortNow(appInfo().dir);
+    void typeInto(paneId, message, 'message');
+    return null;
+  });
+  if (refused) {
+    const { status, ...body } = refused;
+    sendJson(res, status, body);
     return;
   }
-  if (context) notePageContext(paneId, context);
-  // The effort for the chat's mode first, so this message runs at it; time for /effort to run before the message is typed.
-  if (await syncEffort(appInfo().dir)) await new Promise((resolve) => setTimeout(resolve, 700));
-  void typeInto(paneId, message, 'message');
   res.writeHead(204).end();
 };
 
@@ -1290,8 +1299,32 @@ const effortTyped = new Map();
  * seconds, and before each message the chat sends). /effort also saves the level as the user's default; the next mode change or
  * session sets it again. True when it typed; false too when herdr couldn't be reached.
  */
+/**
+ * One thing typed into a pane at a time: the studio's /effort (every few seconds, and before a message) and a message from the
+ * chat each wait for the one before, so they never land in Claude's input box together. Runs `fn` after the last one queued.
+ */
+const paneQueues = new Map();
+const withPaneLock = (paneId, fn) => {
+  const next = (paneQueues.get(paneId) ?? Promise.resolve()).then(fn, fn);
+  const settled = next.catch(() => undefined);
+  paneQueues.set(paneId, settled);
+  settled.then(() => paneQueues.get(paneId) === settled && paneQueues.delete(paneId));
+  return next;
+};
+
+const syncEffort = (appDir) => {
+  let paneId = null;
+  try {
+    paneId = chatAgent(appDir)?.paneId ?? null;
+  } catch {
+    // herdr unreachable
+  }
+  return paneId ? withPaneLock(paneId, () => syncEffortNow(appDir)) : Promise.resolve(false);
+};
+
+/** syncEffort's work, for a caller that holds the chat pane's lock already. */
 const effortSyncing = new Set();
-const syncEffort = async (appDir) => {
+const syncEffortNow = async (appDir) => {
   let key = null;
   try {
     const chat = chatAgent(appDir);
@@ -1313,6 +1346,19 @@ const syncEffort = async (appDir) => {
   }
 };
 const EFFORT_SYNC_MS = 3000;
+const INPUT_BOX_WAIT_MS = 10_000;
+/** Whether `check()` comes true within `ms`, looking every 200 ms. */
+const until = async (check, ms, step = 200) => {
+  for (let waited = 0; waited <= ms; waited += step) {
+    try {
+      if (check()) return true;
+    } catch {
+      // the pane went away for a moment
+    }
+    await new Promise((resolve) => setTimeout(resolve, step));
+  }
+  return false;
+};
 
 /**
  * Types a slash command into Claude's input box without Enter, waits (up to `wait` ms) for the box to show exactly it, then
@@ -1324,6 +1370,8 @@ const typeEffort = async (paneId, command, { read = () => paneInput(paneScreen(p
   for (let waited = 0; waited <= wait; waited += step) {
     if (read() === command) {
       keys('enter');
+      // Done once the box is empty again: /effort has run, and what's typed next goes in on its own.
+      for (let after = 0; after <= wait && read(); after += step) await new Promise((resolve) => setTimeout(resolve, step));
       return true;
     }
     await new Promise((resolve) => setTimeout(resolve, step));
@@ -1820,4 +1868,4 @@ if (require.main === module) {
   }, PUSH_RETRY_MS);
 }
 
-module.exports = { serveVadFile, appAgents, appInfo, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, shellQuote, streamJob, suspectTranscript, clearInput, takeRestoredInput, typeInto, typeEffort, tabState, updateListener, wavStats };
+module.exports = { serveVadFile, appAgents, appInfo, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, shellQuote, streamJob, suspectTranscript, clearInput, takeRestoredInput, typeInto, typeEffort, withPaneLock, tabState, updateListener, wavStats };

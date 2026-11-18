@@ -254,6 +254,10 @@ if [ "$1" = logs ]; then
   app="$(config .appDir)"
   [ -z "$app" ] || [ ! -f "$app/data/logs/dev.log" ] || cp "$app/data/logs/dev.log" "$bundle/app-dev.log"
   [ ! -d "$HOME/.claude/state/panes" ] || cp -R "$HOME/.claude/state/panes" "$bundle/panes"
+  # Which pages Claude published, and which were plans (titles, links and dates; not the pages).
+  for registry in "$STUDIO_HOME"/artifacts/*/registry.jsonl; do
+    [ ! -f "$registry" ] || { mkdir -p "$bundle/artifacts"; cp "$registry" "$bundle/artifacts/$(basename "$(dirname "$registry")").jsonl"; }
+  done
   for live in "$HOME"/Studio/.live/*/app.log; do
     [ ! -f "$live" ] || cp "$live" "$bundle/live-$(basename "$(dirname "$live")").log"
   done

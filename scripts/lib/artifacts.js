@@ -239,6 +239,9 @@ const describe = (worktree) => {
     artifact.versions.push({ ts: entry.ts, sessionId: entry.sessionId, version: entry.version, snapshot: entry.snapshot, description: entry.description });
     artifact.title = entry.title ?? artifact.title ?? null;
     artifact.description = entry.description ?? artifact.description ?? null;
+    // The feature its latest version is a plan for (null when it isn't a plan), and that version's page, for a Build this.
+    artifact.plan = entry.plan ?? null;
+    artifact.page = entry.filePath ?? null;
     byId.set(entry.id, artifact);
   }
   // A removed artifact stays in the registry (so a backfill can't re-add it) and is hidden until it is published again.

@@ -87,6 +87,8 @@ type ArtifactsPaneProps = {
   onPreview: (id: string | null) => void
   /** A publish seen after the first load: a new artifact, or a new version of one. */
   onPublished: (artifact: ArtifactInfo) => void
+  /** The newest plan among the artifacts (or null), on every look at them: the chat shows its [Build this] while it's current. */
+  onPlan?: (artifact: ArtifactInfo | null) => void
   /** A plan's [Build this] has started its feature and switched to Build: the chat sends Claude this. */
   onBuildPlan: (message: string) => void
   /** Told what the pane shows whenever that changes, for the chat to pass on with each message. */
@@ -173,7 +175,7 @@ const VersionsOverlay = ({ history, shown, latest, onShow, previous, diffing, on
 }
 
 /** The app's artifact index (Claude-written, sandboxed), or every recorded artifact as cards; with the buttons that rebuild or consolidate it. */
-export const ArtifactsPane = ({ label, switcher, previewId, onPreview, onPublished, onBuildPlan, onShowing, onPick, onEscape, drawingRef, drawingAttached, onDrawingChange }: ArtifactsPaneProps) => {
+export const ArtifactsPane = ({ label, switcher, previewId, onPreview, onPublished, onPlan, onBuildPlan, onShowing, onPick, onEscape, drawingRef, drawingAttached, onDrawingChange }: ArtifactsPaneProps) => {
   const tip = useTip()
   const { perform, isBusy, state, confirm, act, pendingOf, failedOf } = useControls()
   // undefined until the first answer; null when the studio server couldn't list them (it may predate this page).
@@ -190,12 +192,15 @@ export const ArtifactsPane = ({ label, switcher, previewId, onPreview, onPublish
   // A publish seen after the first load (a new artifact, or a new version of one) is passed on, for the cockpit to preview.
   const onPublishedRef = useRef(onPublished)
   onPublishedRef.current = onPublished
+  const onPlanRef = useRef(onPlan)
+  onPlanRef.current = onPlan
   useEffect(() => {
     let seen: Map<string, string> | null = null
     const load = async () => {
       const next = await getArtifacts()
       setData(next)
       if (!next) return
+      onPlanRef.current?.(next.artifacts.filter((a) => a.plan && !a.supersededBy).reduce<ArtifactInfo | null>((a, b) => (!a || b.latest.ts > a.latest.ts ? b : a), null))
       const published = next.artifacts.filter((a) => seen?.get(a.id) !== a.latest.ts)
       if (seen && published.length) onPublishedRef.current(published.reduce((a, b) => (b.latest.ts > a.latest.ts ? b : a)))
       seen = new Map(next.artifacts.map((a) => [a.id, a.latest.ts]))
