@@ -95,16 +95,23 @@ const KeepOrDiscard = ({ w, feature }: { w: App; feature: Feature }) => {
     const ok = await confirm(
       `Keep "${feature.name}" as ${found.version}?\n${anyway ? 'Its tests fail, and it will be kept as it is. ' : ''}This goes into the app's list of features:\n\n${found.summary}`
     )
-    if (!ok) return
+    // Closed without confirming: said so, and the passing run is kept, so the next Keep asks again straight away.
+    if (!ok) return setMessage("Not kept yet. Press Keep when you're ready.")
     setDoing('keeping')
     const kept = await keepFeature(found.summary, anyway)
     setDoing(null)
-    if ('error' in kept) return setMessage(kept.error)
+    if ('error' in kept) {
+      // Refused (the app changed since the tests ran, say): the next Keep runs them again.
+      setRun(null)
+      return setMessage(kept.error)
+    }
     setMessage('')
     setRun(null)
     await refresh()
   }
   const runTests = async () => {
+    // Nothing has changed since the tests passed: no need to run them (and write the summary) again.
+    if (check?.ok) return keep(check, false)
     setDoing('checking')
     setMessage('')
     const found = await checkFeature()
