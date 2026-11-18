@@ -1,5 +1,5 @@
 import { cn } from 'cn'
-import { Check, KeyRound, LoaderCircle, Play, RotateCcw, Trash2, Undo2, Wrench, X } from 'lucide-react'
+import { Check, Hourglass, KeyRound, LoaderCircle, Play, RotateCcw, Trash2, Undo2, Wrench, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { AlertDialog, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { useControls } from '@/components/controls/ControlsProvider'
@@ -104,6 +104,8 @@ const KeepDialog = ({ open, feature, runFor, nextVersion, onClose, onKept, onAsk
   const [summary, setSummary] = useState<Step<SummaryPart>>({ state: 'running' })
   const [keeping, setKeeping] = useState(false)
   const [error, setError] = useState('')
+  // Claude busy when Keep began: not a failure. Working: the checks start once it's done. A question: it needs answering first.
+  const [waiting, setWaiting] = useState<'working' | 'question' | null>(null)
   // Which opening a result belongs to: one that arrives after Cancel (or for an older opening) is dropped.
   const opening = useRef(0)
   const passed = useRef<{ for: string; gate: GatePart; summary: SummaryPart } | null>(null)
@@ -121,12 +123,23 @@ const KeepDialog = ({ open, feature, runFor, nextVersion, onClose, onKept, onAsk
     }
     setGate({ state: 'running' })
     setSummary({ state: 'running' })
-    const settle = <T,>(set: (step: Step<T>) => void) => (found: T | { error: string }) => {
-      if (opening.current !== id) return
-      set('error' in (found as object) ? { state: 'failed', error: (found as { error: string }).error } : { state: 'done', value: found as T })
-    }
-    void checkFeaturePart('gate').then(settle<GatePart>(setGate))
-    void checkFeaturePart('summary').then(settle<SummaryPart>(setSummary))
+    setWaiting(null)
+    const run = <T,>(part: 'gate' | 'summary', set: (step: Step<T>) => void) =>
+      void checkFeaturePart(part).then((found) => {
+        if (opening.current !== id) return
+        const error = 'error' in found ? found.error : null
+        const busy = error?.startsWith('Claude is working') ? 'working' : error?.startsWith('Claude is waiting on a question') ? 'question' : null
+        if (busy) {
+          setWaiting(busy)
+          // Asked again until Claude is free; a question can't be answered behind the dialog, so it's left to Cancel.
+          if (busy === 'working') setTimeout(() => opening.current === id && run(part, set), 2000)
+          return
+        }
+        setWaiting(null)
+        set(error ? { state: 'failed', error } : { state: 'done', value: found as T })
+      })
+    run<GatePart>('gate', setGate)
+    run<SummaryPart>('summary', setSummary)
   }, [open, runFor])
 
   const gateDone = gate.state === 'done' ? gate.value : null
@@ -165,9 +178,19 @@ const KeepDialog = ({ open, feature, runFor, nextVersion, onClose, onKept, onAsk
             Keep “{feature.name}” as {version}?
           </AlertDialogTitle>
         </AlertDialogHeader>
-        <ul className="grid gap-1.5">
-          <StepLine step={gate} running="Running the app's checks…" done="The app's checks pass" failed={failed.length ? "The app's checks fail" : null} />
-          <StepLine step={summary} running="Writing a summary of what this feature does…" done="Summary written" />
+        {/* Two lines whatever they say, so nothing below moves. */}
+        <ul className="grid min-h-12 gap-1.5">
+          {waiting ? (
+            <li className="flex items-start gap-2 text-sm text-muted-foreground">
+              {waiting === 'working' ? <LoaderCircle className="mt-0.5 size-4 shrink-0 animate-spin" /> : <Hourglass className="mt-0.5 size-4 shrink-0" />}
+              <span>{waiting === 'working' ? 'Waiting for Claude to finish what it’s doing… The checks start as soon as it has.' : 'Claude is waiting for an answer in the chat. Cancel, answer it, then press Keep again.'}</span>
+            </li>
+          ) : (
+            <>
+              <StepLine step={gate} running="Running the app's checks…" done="The app's checks pass" failed={failed.length ? "The app's checks fail" : null} />
+              <StepLine step={summary} running="Writing a summary of what this feature does…" done="Summary written" />
+            </>
+          )}
         </ul>
         {/* A fixed-size box for the summary (and what failed), scrolling inside, so the dialog never changes size. */}
         <div className="h-56 overflow-y-auto rounded-md border bg-muted/40 px-3 py-2.5 text-sm leading-relaxed">
