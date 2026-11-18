@@ -107,6 +107,7 @@ const Layout = ({ selected, setSelected, adopt, focusMessage }: LayoutProps) => 
   // and back to the app when a Build turn ends. An unsent drawing keeps the pane where it is (lib/plan.ts).
   const middle = () => ({ source, drawInk: ink.attached, artifactInk: artifactInk.attached })
   const onPublished = (artifact: ArtifactInfo) => {
+    if (artifact.plan) setPlan({ name: artifact.plan, title: artifact.name, url: artifact.url, page: artifact.page ?? null, sessionId: artifact.latest.sessionId ?? null })
     const fromChat = !w?.agents?.some((agent) => agent.tab === 'Artifacts' && agent.sessionId === artifact.latest.sessionId)
     const { preview, show } = onPublish(middle(), fromChat)
     if (preview) setPreviewId(artifact.id)
@@ -125,6 +126,8 @@ const Layout = ({ selected, setSelected, adopt, focusMessage }: LayoutProps) => 
 
   // What a plan's [Build this] has the chat send Claude: to the chat's Claude, shown in the chat first if another session was.
   const [outbox, setOutbox] = useState<{ id: number; text: string } | null>(null)
+  // The plan published in this conversation, for the chat's [Build this] (it shows only while the chat is in Plan, in that session).
+  const [plan, setPlan] = useState<{ name: string; title: string; url: string; page: string | null; sessionId: string | null } | null>(null)
   const sendForHer = (text: string) => {
     if (chat) setSelected(chat.paneId)
     setOutbox((current) => ({ id: (current?.id ?? 0) + 1, text }))
@@ -174,6 +177,8 @@ const Layout = ({ selected, setSelected, adopt, focusMessage }: LayoutProps) => 
       pageContext={pageContext}
       stickyFocus
       outbox={outbox}
+      plan={plan}
+      onBuildPlan={sendForHer}
       attachments={[
         ...(ink.attached ? [{ key: 'drawing', label: 'drawing', title: 'Your drawing from the Draw tab, as it is when you send' }] : []),
         ...(artifactInk.attached ? [{ key: 'artifact-drawing', label: 'drawing on artifact', title: 'What you drew on the artifact, over the page as it shows when you send' }] : []),

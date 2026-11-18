@@ -321,6 +321,14 @@ const panePrompt = (screenText) => {
   if (end < 0) {
     return null;
   }
+  // The pane's width: a rule spans it; else the longest line. A line the terminal wrapped was full, so the word that
+  // starts the next one didn't fit on it.
+  const width = Math.max(...lines.filter((line) => RULE.test(line.trim())).map((line) => line.trim().length), 0) || Math.max(...lines.map((line) => line.length));
+  // The text goes on where the option's own text starts (`  2. ` → column 5), never as a border or a rule.
+  const textColumn = (line) => line.length - OPTION.exec(line)[2].length - (line.length - line.trimEnd().length);
+  const wrappedInto = (start, line, next) =>
+    next !== undefined && next.trim() && !OPTION.test(next) && !RULE.test(next.trim()) && !/^[╰╭└┌─]/.test(next.trim()) &&
+    next.length - next.trimStart().length >= start && line.length + 1 + next.trim().split(/\s+/)[0].length > width;
   const options = [];
   let focused = null;
   let want = Number(OPTION.exec(lines[end])[1]);
@@ -328,8 +336,12 @@ const panePrompt = (screenText) => {
   for (let i = end; i >= 0 && want >= 1 && at - i <= MAX_OPTION_GAP; i--) {
     const match = OPTION.exec(lines[i]);
     if (match && Number(match[1]) === want) {
-      const box = CHECKBOX.exec(match[2]);
-      options.unshift(box ? { key: match[1], label: match[2].slice(box[0].length), checked: box[1] !== ' ' } : { key: match[1], label: match[2] });
+      // An option too long for the pane goes on over the next lines.
+      let label = match[2];
+      const start = textColumn(lines[i]);
+      for (let j = i; wrappedInto(start, lines[j], lines[j + 1]); j++) label += ` ${lines[j + 1].trim()}`;
+      const box = CHECKBOX.exec(label);
+      options.unshift(box ? { key: match[1], label: label.slice(box[0].length), checked: box[1] !== ' ' } : { key: match[1], label });
       if (FOCUSED.test(lines[i])) {
         focused = match[1];
       }

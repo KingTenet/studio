@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { parseAnsi, type AnsiStyle } from '@/lib/ansi'
 import { FOCUS_CHAT_EVENT } from '@/lib/artifacts'
+import { BuildThis } from './BuildThis'
 import { focusAgent, pressEsc, sendToSession, setMode, uploadFile } from '@/lib/api'
 import { agentLook, sessionControls, sessionName, waitingOn, type ChipModel, type LookName, type StartModel } from '@/lib/controls'
 import { parseMarkdown, type Inline as InlinePart } from '@/lib/markdown'
@@ -441,9 +442,13 @@ type ChatProps = {
    * asking for a feature name, since its feature has been started.
    */
   outbox?: { id: number; text: string } | null
+  /** The plan published in this conversation, not yet built: the chat shows its [Build this] above the message box while in Plan. */
+  plan?: { name: string; title: string; url: string; page: string | null; sessionId: string | null } | null
+  /** Sends Claude the plan once [Build this] has started its feature and switched to Build. */
+  onBuildPlan?: (message: string) => void
 }
 
-export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, onTogglePin, pinShortcut, overlay = false, onToggleOverlay, onExpand, onClose, focusMessage, pageContext, attachments = [], onRemoveAttachment, onSent, stickyFocus = false, outbox = null }: ChatProps) => {
+export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, onTogglePin, pinShortcut, overlay = false, onToggleOverlay, onExpand, onClose, focusMessage, pageContext, attachments = [], onRemoveAttachment, onSent, stickyFocus = false, outbox = null, plan = null, onBuildPlan }: ChatProps) => {
   const tip = useTip()
   const { perform, isBusy, pendingOf } = useControls()
   const [view, setView] = useSharedPref<ChatView>('wt:chatView', 'chat')
@@ -986,6 +991,14 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
             </div>
           )}
           {w && <ModeSwitch mode={w.mode} />}
+          {plan && onBuildPlan && w?.mode === 'plan' && agent && plan.sessionId === agent.sessionId && (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5">
+              <span className="min-w-0 flex-1 truncate text-xs">
+                The plan is ready: <span className="font-medium">{plan.title}</span>
+              </span>
+              <BuildThis plan={plan} onSend={onBuildPlan} />
+            </div>
+          )}
           {naming !== null && <StartFeature hint="Plans and changes are made as part of a feature. Name this one to start it; your message is sent once it has started." autoFocus onStarted={startedFeature} onCancel={() => setNaming(null)} />}
           <Textarea
             ref={messageBox}

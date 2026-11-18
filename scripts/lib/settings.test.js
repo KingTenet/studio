@@ -14,10 +14,12 @@ const path = require('node:path');
 
 const settings = JSON.parse(readFileSync(path.join(__dirname, '..', '..', 'claude', 'settings.json'), 'utf8'));
 
-test('the allowlist has only exact commands and paths inside the app folder', () => {
+test("the allowlist has only exact commands and paths inside the app folder, and reading /look's own screenshots", () => {
   const allow = settings.permissions.allow;
   assert.ok(allow.length > 0);
-  for (const rule of allow) {
+  // /look saves its screenshots in ~/.studio/looks, outside the app: reading one mustn't stop to ask (it did, with a clipped question).
+  assert.ok(allow.includes('Read(~/.studio/looks/**)'));
+  for (const rule of allow.filter((rule) => rule !== 'Read(~/.studio/looks/**)')) {
     const bash = /^Bash\((.*)\)$/.exec(rule);
     if (bash) assert.ok(!bash[1].includes('*'), `${rule} is a wildcard, which auto mode drops`);
     else assert.match(rule, /^(Edit|Read)\(\.\/[^)]*\)$/, `${rule} reaches outside the app folder`);

@@ -198,6 +198,33 @@ test('panePrompt: a question wrapped over several lines is read whole', () => {
   assert.equal(panePrompt(screen).question, 'Should I also update the ticket : add the metric-name removal to its In scope list and assign it to you?');
 });
 
+test('panePrompt: an option too long for the pane is read whole; a description below a short one is not part of it', () => {
+  const width = 50;
+  const screen = [
+    '─'.repeat(width),
+    ' Read file',
+    '',
+    ' Allow this read outside the working directories?',
+    '',
+    ' ❯ 1. Yes, but ask again next time',
+    '   2. Yes, and keep allowing any reads outside the',
+    '      working directories this session',
+    '   3. No, and block reads outside the working',
+    '      directories',
+    '   4. No, and ask again next time',
+    '      Claude stops and waits.',
+    '',
+    ' Esc to cancel',
+  ].join('\n');
+  assert.ok(screen.split('\n').every((line) => line.length <= width));
+  assert.deepEqual(panePrompt(screen).options, [
+    { key: '1', label: 'Yes, but ask again next time' },
+    { key: '2', label: 'Yes, and keep allowing any reads outside the working directories this session' },
+    { key: '3', label: 'No, and block reads outside the working directories' },
+    { key: '4', label: 'No, and ask again next time' },
+  ]);
+});
+
 test('panePrompt: a multi-select question reads its ticks and its Next', () => {
   const screen = [
     '←  ☒ Merge  ☐ Pages  ✔ Submit  →',

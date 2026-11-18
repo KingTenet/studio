@@ -148,6 +148,10 @@ export type ArtifactInfo = {
   latest: ArtifactVersion
   /** The id of the artifact that replaced this one in a consolidation. */
   supersededBy: string | null
+  /** For a plan page (its studio-plan meta): the feature it is for. */
+  plan?: string | null
+  /** Its local copy's file, when there is one. */
+  page?: string | null
 }
 
 export type ArtifactsView = {
