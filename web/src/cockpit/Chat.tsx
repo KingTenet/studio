@@ -718,15 +718,22 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
     session.messages.length > pending.count || session.messages.some((message) => message.kind === 'you' && message.text.includes(pending.text.slice(0, 200)))
   const unsent = sending && agent?.paneId === sending.paneId && !arrived(sending) ? sending.text : null
 
-  const pending = stuckInput ? `Something typed in Claude's window wasn't sent: “${stuckInput}”. Clear it to send yours.` : ''
+  const pending = stuckInput ? `Unsent text: “${stuckInput}”` : ''
   const clearStuck = async () => {
     if (!agent) return
     const error = await sendToSession({ paneId: agent.paneId, label, clear: true })
     if (error) setNotice({ text: error, error: true })
     void poll()
   }
-  const shown =
-    notice?.text || pending || (blocked ? 'Answer the prompt above first, or Esc to cancel it.' : working ? 'Claude is working: a message sent now waits in its queue and reaches it at its next step. Esc interrupts it instead.' : '')
+  // Status hints stay on one line (the full wording on hover), so they come and go without moving the chat; errors wrap.
+  const hint = blocked
+    ? { text: 'Answer the question above', full: 'Answer the question above first, or press Esc to cancel it.' }
+    : working
+      ? { text: 'Claude is working: messages wait', full: 'Claude is working: a message sent now waits in its queue and reaches it at its next step. Esc interrupts it instead.' }
+      : null
+  const shown = notice?.text || pending || hint?.text || ''
+  const shownFull = notice?.text || (pending ? `Text typed in Claude's window wasn't sent: “${stuckInput}”. Clear it to send yours.` : hint?.full) || ''
+  const wraps = Boolean(notice?.error)
   const name = placeholder ? 'Claude' : agent ? (agent.title ?? sessionName(w, agent)) : (stopped?.title ?? 'claude')
   const queuedRow = queued && (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-0.5 opacity-60">
@@ -1023,7 +1030,9 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
             }}
           />
           <div className="flex items-center gap-2">
-            <span className={cn('min-w-0 flex-1 text-xs break-words', notice?.error || pending ? 'text-destructive' : 'text-muted-foreground')}>{shown}</span>
+            <span title={shownFull || undefined} className={cn('min-h-4 min-w-0 flex-1 text-xs', wraps ? 'break-words' : 'truncate', notice?.error || pending ? 'text-destructive' : 'text-muted-foreground')}>
+              {shown}
+            </span>
             {pending && shown === pending && (
               <Button size="sm" variant="outline" onClick={() => void clearStuck()}>
                 Clear it
