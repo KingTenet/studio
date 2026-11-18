@@ -23,6 +23,29 @@ import { CloseButton, PinButton } from './useAutoHide'
 import { useSession, type ChatView } from './useSession'
 
 // `index` marks one of your messages (data-you) so the transcript can pin it once it scrolls above the top.
+/**
+ * An empty conversation opens with a note in Claude's style, saying what to do in the chat's mode, so it reads as a chat
+ * from the start. It isn't sent to Claude.
+ */
+const Starter = ({ w }: { w: App | null }) => {
+  const feature = w?.feature?.name
+  const text = !w
+    ? 'Nothing said yet.'
+    : w.mode === 'ask'
+      ? 'Ask me anything about your app: how something works, where something is saved, or what a change would involve. In Ask, I only look and answer; nothing changes.'
+      : !feature
+        ? 'Name a feature above to start.'
+        : w.mode === 'plan'
+          ? `Let's plan “${feature}”. Start typing below to tell me what you'd like it to do. I'll ask you a few questions, one at a time, then write a plan you can build with one click.`
+          : `Let's build “${feature}”. Start typing below to tell me what to change, and you'll see it happen in the app. Each change I make is saved as a checkpoint you can go back to.`
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-0.5 opacity-75">
+      <span className="text-[10px] font-medium tracking-widest text-muted-foreground uppercase">Claude</span>
+      <p className="text-sm leading-relaxed">{text}</p>
+    </div>
+  )
+}
+
 export const Message = ({ message, index }: { message: ChatMessage; index?: number }) => {
   const tip = useTip()
   if (message.kind === 'tool') {
@@ -733,7 +756,7 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
           }}
           className="scrollbar-subtle grid min-h-0 auto-rows-max grid-cols-[minmax(0,1fr)] content-start gap-4 overflow-x-hidden overflow-y-auto px-8 py-4"
         >
-          {messages.length ? messages.map((message, i) => <Message key={i} message={message} index={i} />) : !unsent && <p className="text-sm text-muted-foreground">Nothing said yet.</p>}
+          {messages.length ? messages.map((message, i) => <Message key={i} message={message} index={i} />) : !unsent && <Starter w={w} />}
           {unsent && (
             <div className="grid grid-cols-[minmax(0,1fr)] gap-0.5 opacity-60">
               <span className="flex items-center gap-1.5 text-[10px] font-medium tracking-widest text-muted-foreground uppercase">
@@ -929,6 +952,7 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
               <StartFeature
                 hint={naming !== null ? 'Name the feature to start it. Your message is sent once it has started.' : 'No feature in progress. Name one to start building it.'}
                 autoFocus={naming !== null}
+                keepMode={naming !== null}
                 onStarted={startedFeature}
                 onCancel={naming !== null ? () => setNaming(null) : undefined}
               />

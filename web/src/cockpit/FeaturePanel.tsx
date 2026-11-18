@@ -7,13 +7,15 @@ import { Markdown } from './Markdown'
 import { useTip } from '@/components/controls/Tip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { bringBack, checkFeaturePart, discardFeature, goBackTo, keepFeature, sendToSession, startFeature } from '@/lib/api'
+import { bringBack, checkFeaturePart, discardFeature, goBackTo, keepFeature, sendToSession, setMode, startFeature } from '@/lib/api'
 import { plural } from '@/lib/format'
 import type { App, Checkpoint, Feature, FeatureCheck } from '@/lib/types'
 
 type StartFeatureProps = {
   /** Shown above the box. */
   hint?: string
+  /** Leave the chat's mode as it is once started (a message typed in Build waits to be sent); else it switches to Plan. */
+  keepMode?: boolean
   /** Called once the feature has started. */
   onStarted?: () => void
   onCancel?: () => void
@@ -21,7 +23,7 @@ type StartFeatureProps = {
 }
 
 /** A box to name a feature, and Start: develop is reset to the latest version; the chat carries on into it. */
-export const StartFeature = ({ hint, onStarted, onCancel, autoFocus }: StartFeatureProps) => {
+export const StartFeature = ({ hint, keepMode = false, onStarted, onCancel, autoFocus }: StartFeatureProps) => {
   const tip = useTip()
   const { refresh } = useControls()
   const [name, setName] = useState('')
@@ -31,6 +33,8 @@ export const StartFeature = ({ hint, onStarted, onCancel, autoFocus }: StartFeat
     if (!name.trim() || starting) return
     setStarting(true)
     const failed = await startFeature(name.trim())
+    // A new feature starts with planning it: the chat goes to Plan.
+    if (!failed && !keepMode) await setMode('plan')
     setStarting(false)
     if (failed) return setError(failed)
     setName('')
