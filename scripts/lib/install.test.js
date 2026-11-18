@@ -93,7 +93,7 @@ test('install.sh sets everything up once, and a second run changes nothing', () 
   assert.match(first.stdout, /studio up/);
 
   // Tools, the model and the logins.
-  for (const f of ['herdr', 'node', 'pnpm', 'gh', 'whisper-cpp']) assert.match(log(), new RegExp(`^brew install --quiet ${f}$`, 'm'));
+  for (const f of ['herdr', 'node', 'pnpm', 'gh', 'whisper-cpp', 'ffmpeg']) assert.match(log(), new RegExp(`^brew install --quiet ${f}$`, 'm'));
   assert.match(log(), /^claude-installer$/m);
   assert.doesNotMatch(log(), /claude-code/);
   assert.ok(fs.existsSync(path.join(dirs.home, '.local', 'bin', 'claude')));

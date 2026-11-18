@@ -100,7 +100,8 @@ add_to_zprofile "eval \"\$($(command -v brew) shellenv)\""
 
 step "The tools the studio uses"
 # Each formula, and the command that shows it's there.
-for pair in herdr:herdr node:node pnpm:pnpm gh:gh whisper-cpp:whisper-server jq:jq; do
+# ffmpeg: whisper-server's --convert turns the cockpit's recordings into the WAV it reads with it, and exits without it.
+for pair in herdr:herdr node:node pnpm:pnpm gh:gh whisper-cpp:whisper-server ffmpeg:ffmpeg jq:jq; do
   formula=${pair%%:*} cmd=${pair#*:}
   if command -v "$cmd" >/dev/null; then
     ok "$formula"

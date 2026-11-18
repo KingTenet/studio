@@ -452,6 +452,7 @@ tab_command() {
     # Its output (or why dictation is off) also goes to whisper.log.
     whisper)
       if ! command -v whisper-server >/dev/null; then echo "echo 'Dictation is off: whisper-server is not installed (brew install whisper-cpp).' | tee -a $(q "$LOGS/whisper.log")"
+      elif ! command -v ffmpeg >/dev/null; then echo "echo 'Dictation is off: ffmpeg, which whisper-server needs, is not installed. Run the install line again (or brew install ffmpeg).' | tee -a $(q "$LOGS/whisper.log")"
       elif [ ! -f "$WHISPER_MODEL" ]; then echo "echo $(q "Dictation is off: there is no Whisper model at $WHISPER_MODEL.") | tee -a $(q "$LOGS/whisper.log")"
       else echo "whisper-server -m $(q "$WHISPER_MODEL") --host 127.0.0.1 --port $STUDIO_WHISPER_PORT --convert 2>&1 | tee -a $(q "$LOGS/whisper.log")"
       fi ;;
