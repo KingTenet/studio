@@ -40,6 +40,8 @@
 #        studio switch <app>
 #        studio run [<app>]
 #        studio logs              # puts the studio's logs in one zip on the Desktop, to send to whoever helps
+#        studio down              # stops the studio (Claude, the cockpit, the app's dev server, dictation): `studio up`
+#                                 # then starts it all afresh, on the newest version, and Claude carries on its conversation
 #
 # Logs, in ~/.studio/logs: commands.log (what every studio command printed), studio.log and reaper.log (those tabs'
 # output), sessions.jsonl (which conversation the chat's Claude runs, and what the studio typed into it), actions.jsonl
@@ -73,7 +75,7 @@ WHISPER_MODEL="${STUDIO_WHISPER_MODEL:-$HOME/.whisper/ggml-small.en.bin}"
 WORKSPACE="${STUDIO_WORKSPACE:-studio}"
 CONFIG="$STUDIO_HOME/config.json"
 
-usage() { echo "usage: studio up [--dry-run]   or   studio new <app> [--collaborator <github user>]   or   studio switch <app>   or   studio run [<app>]   or   studio logs" >&2; exit 2; }
+usage() { echo "usage: studio up [--dry-run]   or   studio new <app> [--collaborator <github user>]   or   studio switch <app>   or   studio run [<app>]   or   studio logs   or   studio down" >&2; exit 2; }
 DRY_RUN=false
 case "${1:-} ${2:-}" in
   "up ") ;;
@@ -82,6 +84,7 @@ case "${1:-} ${2:-}" in
   switch\ ?*) [ $# -eq 2 ] || usage ;;
   run\ *) [ $# -le 2 ] || usage ;;
   "logs ") ;;
+  "down ") ;;
   *) usage ;;
 esac
 
@@ -199,6 +202,39 @@ if [ "$1" = new ]; then
   else
     exec "$0" switch "$name"
   fi
+  exit 0
+fi
+
+# --- studio down ----------------------------------------------------------------------------------
+
+if [ "$1" = down ]; then
+  ws=""
+  herdr workspace list >/dev/null 2>&1 &&
+    ws=$(herdr workspace list | jq -r --arg label "$WORKSPACE" '.result.workspaces[] | select(.label == $label) | .workspace_id' | head -n1)
+  if [ -z "$ws" ]; then
+    echo "The studio isn't running."
+    exit 0
+  fi
+  # Not halfway through Claude's turn: a Build turn saves its checkpoint when it ends.
+  claude_tab=$(herdr tab list --workspace "$ws" | jq -r '.result.tabs[] | select(.label == "claude") | .tab_id' | head -n1)
+  if [ -n "$claude_tab" ]; then
+    status=$(herdr pane list --workspace "$ws" | jq -r --arg tab "$claude_tab" '[.result.panes[] | select(.tab_id == $tab)][0].agent_status // "unknown"')
+    case "$status" in
+      working) echo "Claude is still working. Stop the studio when it has finished." >&2; exit 1 ;;
+      blocked) echo "Claude is waiting for an answer in the chat. Stop the studio when it has finished." >&2; exit 1 ;;
+    esac
+  fi
+  herdr workspace close "$ws" >/dev/null
+  # Until its ports are free, a `studio up` straight after would find them taken.
+  for _ in $(seq 1 40); do
+    busy=false
+    for port in "$STUDIO_PORT" "$(config .appPort)" "$STUDIO_WHISPER_PORT"; do
+      [ -n "$port" ] && nc -z 127.0.0.1 "$port" 2>/dev/null && busy=true
+    done
+    [ "$busy" = false ] && break
+    sleep 0.25
+  done
+  echo "The studio has stopped. To start it again (on the newest version): studio up"
   exit 0
 fi
 
