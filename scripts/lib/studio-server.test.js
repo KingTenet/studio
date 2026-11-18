@@ -11,7 +11,7 @@ const path = require('node:path');
 // The server keeps its logs under STUDIO_HOME, read once at load: point it at a throwaway folder before loading it.
 process.env.STUDIO_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-server-test-'));
 
-const { typeInto, clearInput, serveVadFile, appAgents, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats } = require('./studio-server');
+const { typeEffort, typeInto, clearInput, serveVadFile, appAgents, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats } = require('./studio-server');
 
 test('isLocalHost: localhost and 127.0.0.1 only, so a rebound DNS name is refused', () => {
   assert.ok(isLocalHost('localhost'));
@@ -84,6 +84,23 @@ test('answerFreeText: arrows to the free-text option, clears it, types, and pres
   const gone = laggyQuestion('1', '');
   assert.match(await answerFreeText('2', 'x', gone.read, gone.keys, gone.type, 2000), /no such text option/);
   assert.match(await answerFreeText('4', 'x', () => 'no question here', gone.keys, gone.type, 2000), /no such text option/);
+});
+
+test('typeEffort: Enter only once the box shows the whole command; part of it showing is cleared, for the next try', async () => {
+  const run = async (screens) => {
+    const keys = [];
+    let typed = 0;
+    const ok = await typeEffort('w1:p1', '/effort medium', { read: () => (screens.length > 1 ? screens.shift() : screens[0]), type: () => typed++, keys: (...k) => keys.push(...k), wait: 50, step: 10 });
+    return { ok, keys, typed };
+  };
+  // Claude Code still starting: nothing, then the whole command.
+  assert.deepEqual(await run(['', '', '/effort medium']), { ok: true, keys: ['enter'], typed: 1 });
+  // What happened on her Mac: only part of it landed. No Enter; it's cleared.
+  const part = await run(['medium']);
+  assert.equal(part.ok, false);
+  assert.deepEqual(part.keys, Array('medium'.length + 20).fill('backspace'));
+  // Nothing landed at all: nothing to clear.
+  assert.deepEqual(await run(['']), { ok: false, keys: [], typed: 1 });
 });
 
 test('typeInto: types, then logs what is left in the input box with what was typed (not the message itself); nothing left, nothing logged', async () => {

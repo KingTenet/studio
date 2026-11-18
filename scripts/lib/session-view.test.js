@@ -6,7 +6,7 @@ const { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } = requir
 const os = require('node:os');
 const path = require('node:path');
 
-const { paneInput, panePrompt, readTranscript, recordMessages, sessionTitle, stripAnsi, transcriptPath, unstyledText, usageLimit } = require('./session-view');
+const { hasInputBox, paneInput, panePrompt, readTranscript, recordMessages, sessionTitle, stripAnsi, transcriptPath, unstyledText, usageLimit } = require('./session-view');
 
 const RULE = '\x1b[0m\x1b[38;2;138;138;138m' + '─'.repeat(40) + '\x1b[0m\r';
 const STATUS = '  \x1b[0m\x1b[1m\x1b[38;5;6mdelivery\x1b[0m\x1b[38;2;102;102;102m · \x1b[0m';
@@ -125,6 +125,8 @@ test('paneInput: the text between the rules after ❯, ignoring suggestions and 
 
 test('paneInput: a prompt option after a rule is not input', () => {
   assert.equal(paneInput([RULE, '❯ 1. Yes', '  2. No', RULE].join('\n')), '');
+  assert.equal(hasInputBox([RULE, '❯ ', RULE].join('\n')), true, 'an empty box is still a box');
+  assert.equal(hasInputBox(['Resuming conversation…', ''].join('\n')), false, 'not drawn yet');
 });
 
 test('panePrompt: a question with described options and an option after a rule', () => {

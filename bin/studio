@@ -449,10 +449,11 @@ tab_command() {
     studio) echo "node $(q "$STUDIO_DIR/scripts/lib/studio-server.js") 2>&1 | tee -a $(q "$LOGS/studio.log")" ;;
     # Its output also goes to data/logs/dev.log, which the App tab shows and sends Claude when the app breaks (logs/ is never snapshotted).
     app) echo "[ -d node_modules ] || npm install; mkdir -p data/logs; PORT=$APP_PORT npm run dev 2>&1 | tee data/logs/dev.log" ;;
+    # Its output (or why dictation is off) also goes to whisper.log.
     whisper)
-      if ! command -v whisper-server >/dev/null; then echo "echo 'Dictation is off: whisper-server is not installed (brew install whisper-cpp).'"
-      elif [ ! -f "$WHISPER_MODEL" ]; then echo "echo $(q "Dictation is off: there is no Whisper model at $WHISPER_MODEL.")"
-      else echo "whisper-server -m $(q "$WHISPER_MODEL") --host 127.0.0.1 --port $STUDIO_WHISPER_PORT --convert"
+      if ! command -v whisper-server >/dev/null; then echo "echo 'Dictation is off: whisper-server is not installed (brew install whisper-cpp).' | tee -a $(q "$LOGS/whisper.log")"
+      elif [ ! -f "$WHISPER_MODEL" ]; then echo "echo $(q "Dictation is off: there is no Whisper model at $WHISPER_MODEL.") | tee -a $(q "$LOGS/whisper.log")"
+      else echo "whisper-server -m $(q "$WHISPER_MODEL") --host 127.0.0.1 --port $STUDIO_WHISPER_PORT --convert 2>&1 | tee -a $(q "$LOGS/whisper.log")"
       fi ;;
     # It starts Claude the way this script does, so it gets the stand-in for it too.
     reaper) echo "${STUDIO_CLAUDE_CMD:+STUDIO_CLAUDE_CMD=$(q "$STUDIO_CLAUDE_CMD") }$(q "$STUDIO_DIR/scripts/claude-reaper.sh") keep $(q "$WORKSPACE") $(q "$APP_DIR") 2>&1 | tee -a $(q "$LOGS/reaper.log")" ;;

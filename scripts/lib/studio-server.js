@@ -31,7 +31,7 @@ const path = require('node:path');
 
 const { COMMAND_SHELL_MARKER, pausedSessions, processTree, readClosed, logSession, readReconnected, runningCommands, withRealSessions } = require('./claude-reaper');
 const { describe: describeArtifacts, folderFor: artifactFolder, locate: locateArtifact, remove: removeArtifacts, removeNote: removeArtifactNote } = require('./artifacts');
-const { paneInput, panePrompt, readTranscript, sessionTitle, stripAnsi, transcriptPath, usageLimit } = require('./session-view');
+const { hasInputBox, paneInput, panePrompt, readTranscript, sessionTitle, stripAnsi, transcriptPath, usageLimit } = require('./session-view');
 const { EFFORT, bringBack, discard: discardFeature, endPreview, goBack, keep: keepFeature, nextVersion, preview, pushInBackground, read: readFeature, readMode, restore, runGate, setMode, start: startFeature, summarise, versions } = require('./feature');
 
 const SCRIPTS = path.resolve(__dirname, '..');
@@ -805,7 +805,7 @@ const sendToSession = async (req, res) => {
   }
   if (context) notePageContext(paneId, context);
   // The effort for the chat's mode first, so this message runs at it; time for /effort to run before the message is typed.
-  if (syncEffort(appInfo().dir)) await new Promise((resolve) => setTimeout(resolve, 700));
+  if (await syncEffort(appInfo().dir)) await new Promise((resolve) => setTimeout(resolve, 700));
   void typeInto(paneId, message, 'message');
   res.writeHead(204).end();
 };
@@ -1290,22 +1290,48 @@ const effortTyped = new Map();
  * seconds, and before each message the chat sends). /effort also saves the level as the user's default; the next mode change or
  * session sets it again. True when it typed; false too when herdr couldn't be reached.
  */
-const syncEffort = (appDir) => {
+const effortSyncing = new Set();
+const syncEffort = async (appDir) => {
+  let key = null;
   try {
     const chat = chatAgent(appDir);
     if (!chat?.sessionId || (chat.status !== 'idle' && chat.status !== 'done')) return false;
     const level = EFFORT[readMode(appDir)];
-    const key = `${chat.paneId} ${chat.sessionId}`;
-    if (effortTyped.get(key) === level || paneInput(paneScreen(chat.paneId))) return false;
-    void typeInto(chat.paneId, `/effort ${level}`, `/effort ${level}`);
-    logSession({ event: 'typed', pane: chat.paneId, session: chat.sessionId, text: `/effort ${level}` });
-    effortTyped.set(key, level);
-    return true;
+    key = `${chat.paneId} ${chat.sessionId}`;
+    const screen = paneScreen(chat.paneId);
+    // Not until Claude's input box is drawn: typed while Claude Code starts or resumes, part of it was left in the box.
+    if (effortTyped.get(key) === level || effortSyncing.has(key) || !hasInputBox(screen) || paneInput(screen)) return false;
+    effortSyncing.add(key);
+    const typed = await typeEffort(chat.paneId, `/effort ${level}`);
+    logSession({ event: typed ? 'typed' : 'effort-not-typed', pane: chat.paneId, session: chat.sessionId, text: `/effort ${level}` });
+    if (typed) effortTyped.set(key, level);
+    return typed;
   } catch {
     return false;
+  } finally {
+    if (key) effortSyncing.delete(key);
   }
 };
 const EFFORT_SYNC_MS = 3000;
+
+/**
+ * Types a slash command into Claude's input box without Enter, waits (up to `wait` ms) for the box to show exactly it, then
+ * presses Enter. If it never shows whole (Claude Code wasn't taking keys yet), what did land is cleared and it returns false,
+ * for the next sync to try again, rather than leaving part of it in the box. True once Enter is pressed.
+ */
+const typeEffort = async (paneId, command, { read = () => paneInput(paneScreen(paneId)), type = () => execFileSync('herdr', ['pane', 'send-text', paneId, command], { stdio: 'ignore', timeout: 5000 }), keys = (...k) => execFileSync('herdr', ['pane', 'send-keys', paneId, ...k], { stdio: 'ignore', timeout: 5000 }), wait = 2000, step = 100 } = {}) => {
+  type();
+  for (let waited = 0; waited <= wait; waited += step) {
+    if (read() === command) {
+      keys('enter');
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, step));
+  }
+  const left = read();
+  if (left) keys(...Array(left.length + 20).fill('backspace'));
+  return false;
+};
 const PUSH_RETRY_MS = 60_000;
 
 /**
@@ -1321,7 +1347,7 @@ const setModeNow = async (req, res) => {
     sendJson(res, 400, { error: error.message });
     return;
   }
-  sendJson(res, 200, { mode, effortTyped: syncEffort(appDir) });
+  sendJson(res, 200, { mode, effortTyped: await syncEffort(appDir) });
 };
 
 /**
@@ -1786,7 +1812,7 @@ if (require.main === module) {
     })
     .listen(CONTROL_PORT, '127.0.0.1', () => process.stderr.write(`studio server on http://localhost:${CONTROL_PORT}\n`));
   // A new session (or one /clear-ed) gets the effort for the mode once it is idle, and so does a mode changed while Claude worked.
-  setInterval(() => syncEffort(appInfo().dir), EFFORT_SYNC_MS);
+  setInterval(() => void syncEffort(appInfo().dir), EFFORT_SYNC_MS);
   // A push that failed (offline, say) is tried again every minute too, so "not backed up" goes once it can.
   setInterval(() => {
     const appDir = appInfo().dir;
@@ -1794,4 +1820,4 @@ if (require.main === module) {
   }, PUSH_RETRY_MS);
 }
 
-module.exports = { serveVadFile, appAgents, appInfo, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, shellQuote, streamJob, suspectTranscript, clearInput, takeRestoredInput, typeInto, tabState, updateListener, wavStats };
+module.exports = { serveVadFile, appAgents, appInfo, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, shellQuote, streamJob, suspectTranscript, clearInput, takeRestoredInput, typeInto, typeEffort, tabState, updateListener, wavStats };

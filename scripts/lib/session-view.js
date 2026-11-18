@@ -254,6 +254,12 @@ const unstyledText = (line) => {
 const RULE = /^─{10,}\s*$/;
 const INPUT_START = /^❯[\s ](?!\s*\d+\.\s)/;
 
+/** Whether Claude's input box is drawn on a pane's screen yet (it isn't while Claude Code starts or resumes). */
+const hasInputBox = (screen) => {
+  const plain = stripAnsi(screen).replace(/\r/g, '').split('\n');
+  return plain.some((line, i) => i > 0 && INPUT_START.test(line) && RULE.test(plain[i - 1]));
+};
+
 /** Text typed into Claude's input box but not sent, from a pane's ANSI screen ('' when empty). */
 const paneInput = (ansiScreen) => {
   const lines = ansiScreen.replace(/\r/g, '').split('\n');
@@ -371,4 +377,4 @@ const panePrompt = (screenText) => {
   return { question: question ?? '', options, focused, ...(submit && { submit }) };
 };
 
-module.exports = { paneInput, panePrompt, readTranscript, recordMessages, sessionTitle, stripAnsi, transcriptPath, unstyledText, usageLimit };
+module.exports = { hasInputBox, paneInput, panePrompt, readTranscript, recordMessages, sessionTitle, stripAnsi, transcriptPath, unstyledText, usageLimit };
