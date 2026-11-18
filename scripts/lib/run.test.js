@@ -178,8 +178,15 @@ test('studio run says when something else holds its port, and starts nothing', a
   t.after(() => blocker.close());
   const result = s.run();
   assert.equal(result.status, 1);
-  assert.match(result.stderr, new RegExp(`Something else is using port ${s.port}, so my-app can't start`));
+  assert.match(result.stderr, new RegExp(`Something else \\(not one of your apps\\) is using port ${s.port}, so my-app can't start`));
   assert.ok(!fs.existsSync(path.join(s.live, 'app.pid')));
+  // The port's holder is another app running for real (this process, recorded as its server): it's named, with the way to swap.
+  const other = path.join(path.dirname(s.live), 'other-app');
+  fs.mkdirSync(other, { recursive: true });
+  fs.writeFileSync(path.join(other, 'app.pid'), String(process.pid));
+  const named = s.run();
+  assert.equal(named.status, 1);
+  assert.match(named.stderr, new RegExp(`other-app is running for real on port ${s.port}, and only one app can at a time\\.\\nTo open my-app instead: studio stop other-app, then studio run my-app`));
 });
 
 test('a step that fails says which, instead of studio stopping without a word', () => {

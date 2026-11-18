@@ -189,7 +189,7 @@ test('studio clone names the app after the repo, and refuses a name in use or a 
   assert.ok(fs.existsSync(path.join(s.home, 'Studio', 'their-app')));
   result = await s.run('clone', theirs);
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /already there\. Switch to it with: studio switch their-app/);
+  assert.match(result.stderr, /Run it again with --yes to overwrite it with theirs/, 'an earlier copy is only replaced when told to');
 
   const other = path.join(root, 'not-studio');
   fs.mkdirSync(other);
@@ -203,4 +203,35 @@ test('studio clone names the app after the repo, and refuses a name in use or a 
   result = await s.run('clone', path.join(root, 'nowhere'));
   assert.equal(result.status, 1);
   assert.match(result.stderr, /There's no app at/);
+});
+
+test('studio clone again replaces an earlier copy, only when told to (it asks in a terminal), and never an app of your own', async (t) => {
+  const s = await setup(t);
+  const theirs = theirApp(path.dirname(s.home));
+  let result = await s.run('clone', theirs, 'writing-hub');
+  assert.equal(result.status, 0, result.stderr);
+  const dir = path.join(s.home, 'Studio', 'writing-hub');
+  fs.writeFileSync(path.join(dir, 'mine.txt'), 'my experiment');
+
+  // No terminal to ask in, and no --yes: left as it is.
+  result = await s.run('clone', theirs, 'writing-hub');
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /Warning: .*writing-hub already exists: your copy of /);
+  assert.match(result.stderr, /Run it again with --yes to overwrite it with theirs/);
+  assert.ok(fs.existsSync(path.join(dir, 'mine.txt')));
+
+  // They've kept another version since; --yes replaces the copy with theirs.
+  git(theirs, 'checkout', '-q', 'main');
+  git(theirs, '-c', 'user.name=her', '-c', 'user.email=her@example.com', 'commit', '-q', '--allow-empty', '-m', 'Calendar');
+  git(theirs, '-c', 'user.name=her', '-c', 'user.email=her@example.com', 'tag', '-a', 'v3', '-m', 'v3 Calendar');
+  result = await s.run('clone', theirs, 'writing-hub', '--yes');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Made writing-hub from v3\./);
+  assert.ok(!fs.existsSync(path.join(dir, 'mine.txt')), 'what was changed in the copy is gone');
+  assert.equal(s.config().appDir, dir);
+
+  // An app of your own (old-app, made here) is never replaced.
+  result = await s.run('clone', theirs, 'old-app', '--yes');
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /it's an app of yours, not a copy, so it isn't replaced/);
 });

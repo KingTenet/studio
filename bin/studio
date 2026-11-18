@@ -168,12 +168,13 @@ command_help() {
       echo "Your apps:"
       list_apps ;;
     clone)
-      printf '%sstudio clone%s <source> [<name>]\n\n' "$b" "$r"
+      printf '%sstudio clone%s <source> [<name>] [--yes]\n\n' "$b" "$r"
       echo "Copies someone else's Studio app into ~/Studio and switches to it, from their latest kept version."
       echo "Nothing is ever pushed back to them, and their data isn't copied (it isn't in git)."
       echo
       echo "  <source>   a GitHub URL, owner/repo, or a folder with the app's git repository"
       echo "  <name>     what to call it here (default: the repo's name)"
+      echo "  --yes      replace an earlier copy of it without asking (it asks, as that loses what you changed in it)"
       echo
       echo "  e.g.  studio clone sam-rivers/recipe-box"
       echo "        studio clone https://github.com/sam-rivers/recipe-box my-recipes" ;;
@@ -223,7 +224,7 @@ case "${1:-} ${2:-}" in
   "up --dry-run") DRY_RUN=true ;;
   new\ ?*) ;;
   switch\ ?*) [ $# -eq 2 ] || usage "$1" ;;
-  clone\ ?*) [ $# -le 3 ] || usage "$1" ;;
+  clone\ ?*) [ $# -le 4 ] || usage "$1" ;;
   run\ *) [ $# -le 3 ] || usage "$1" ;;
   stop\ *) [ $# -le 2 ] || usage "$1" ;;
   "logs ") ;;
@@ -531,7 +532,18 @@ fi
 # --- studio clone ---------------------------------------------------------------------------------
 
 if [ "$1" = clone ]; then
-  source="$2"
+  # --yes: replace an earlier copy without asking (for when there's no terminal to ask in).
+  yes=false
+  args=()
+  for arg in ${2+"${@:2}"}; do
+    case "$arg" in
+      --yes | -y) yes=true ;;
+      -*) usage clone ;;
+      *) args+=("$arg") ;;
+    esac
+  done
+  [ ${#args[@]} -ge 1 ] && [ ${#args[@]} -le 2 ] || usage clone
+  source="${args[0]}"
   # A local folder with a git repo, a URL, or GitHub's owner/repo.
   if [ -d "$source/.git" ]; then
     from="$(cd "$source" && pwd -P)"
@@ -543,14 +555,42 @@ if [ "$1" = clone ]; then
     echo "There's no app at $source: give a GitHub URL, owner/repo, or a folder with a git repository." >&2
     exit 1
   fi
-  name="${3:-$(basename "${from%/}" .git | tr '[:upper:]' '[:lower:]')}"
+  name="${args[1]:-$(basename "${from%/}" .git | tr '[:upper:]' '[:lower:]')}"
   case "$name" in
     ""|*[!a-z0-9-]*|-*) echo "\"$name\" can't be an app's name. Give one: studio clone $source <name> (lowercase letters, numbers and dashes)." >&2; exit 2 ;;
   esac
   dir="$HOME/Studio/$name"
+  replacing=false
   if [ -e "$dir" ]; then
-    echo "$dir is already there. Switch to it with: studio switch $name, or clone under another name: studio clone $source <name>" >&2
-    exit 1
+    # Only a copy made by clone (theirs as upstream, no origin) is replaced; an app of your own never is.
+    if [ ! -d "$dir/.git" ] || git -C "$dir" remote get-url origin >/dev/null 2>&1 || ! copy_of=$(git -C "$dir" remote get-url upstream 2>/dev/null); then
+      echo "$dir is already there, and it's an app of yours, not a copy, so it isn't replaced." >&2
+      echo "Switch to it with: studio switch $name, or clone under another name: studio clone $source <name>" >&2
+      exit 1
+    fi
+    echo "Warning: $dir already exists: your copy of $copy_of."
+    if [ "$yes" != true ]; then
+      if [ ! -t 0 ]; then
+        echo "Run it again with --yes to overwrite it with theirs." >&2
+        exit 1
+      fi
+      read -r -p "Overwrite it with theirs? Everything you changed in it is lost, its data too. [y/N] " answer
+      case "$answer" in
+        y | Y | yes | Yes) ;;
+        *) echo "Left as it is."; exit 0 ;;
+      esac
+    fi
+    replacing=true
+    # The studio working on it stops first (not while Claude is busy), so nothing runs in the folder as it's replaced.
+    current="$(cd "$(config .appDir)" 2>/dev/null && pwd -P || true)"
+    if [ "$current" = "$(cd "$dir" && pwd -P)" ]; then
+      "$0" down || exit $?
+    fi
+    # Its copy running for real goes too, with that copy's data.
+    "$0" stop "$name" >/dev/null
+    rm -rf "$HOME/Studio/.live/$name"
+    rm -rf "$STUDIO_HOME/features/$(cd "$dir" && pwd -P | sed 's/[^A-Za-z0-9]/-/g')"
+    rm -rf "$dir"
   fi
   mkdir -p "$HOME/Studio"
   echo "Copying ${from} into ${dir}…"
@@ -572,6 +612,8 @@ if [ "$1" = clone ]; then
     echo "Their work in progress (not kept yet) is on upstream/develop; the studio starts from ${latest:-main}."
   fi
   echo "Nothing is pushed back to $from. Its data isn't in git, so the app starts with an empty database."
+  # Replacing the copy the studio works on: it stopped above, so up starts it afresh on the new copy.
+  if [ "$replacing" = true ] && [ "${current:-}" = "$(cd "$dir" && pwd -P)" ]; then exec "$0" up; fi
   exec "$0" switch "$name"
 fi
 
@@ -719,7 +761,17 @@ if [ "$1" = run ]; then
     echo "$name $tag is running."
   else
     if [ -n "$(listener)" ]; then
-      echo "Something else is using port $PORT, so $name can't start." >&2
+      # Another of the apps, running for real, holds the port: say which, and how to swap.
+      holder=""
+      for pidfile in "$HOME"/Studio/.live/*/app.pid; do
+        [ -f "$pidfile" ] && [ "$(cat "$pidfile")" = "$(listener)" ] && holder=$(basename "$(dirname "$pidfile")")
+      done
+      if [ -n "$holder" ]; then
+        echo "$holder is running for real on port $PORT, and only one app can at a time." >&2
+        echo "To open $name instead: studio stop $holder, then studio run $name" >&2
+      else
+        echo "Something else (not one of your apps) is using port $PORT, so $name can't start." >&2
+      fi
       exit 1
     fi
     # The app's secrets, from its own .env.

@@ -139,7 +139,7 @@ test('studio on its own, or help, shows the help page; a wrong command or wrong 
     for (const args of [['help', 'clone'], ['clone', '--help'], ['clone', '-h']]) {
       const help = spawnSync(STUDIO, args, { encoding: 'utf8', env: t.env });
       assert.equal(help.status, 0, args.join(' '));
-      assert.match(help.stdout, /^studio clone <source> \[<name>\]\n/);
+      assert.match(help.stdout, /^studio clone <source> \[<name>\] \[--yes\]\n/);
     }
   } finally {
     t.cleanup();
