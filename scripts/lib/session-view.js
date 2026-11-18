@@ -55,16 +55,28 @@ const COMMAND_ARGS = /<command-args>([^<]*)<\/command-args>/;
 // Claude Code wraps pasted text in these; the paste is still what the user sent.
 const PASTE_TAG = /<\/?pasted_content id="[^"]*">/g;
 
+// Messages the studio writes and sends for a button she pressed: shown as what she pressed, not as the text the studio wrote
+// (web/src/lib/plan.ts buildMessage, lib/appError.ts fixMessage, FeaturePanel's Ask Claude to fix it).
+const STUDIO_SENT = [
+  [/^Build the plan “(.+?)”: read it at /, (match) => `Build this: “${match[1]}”`],
+  [/^The app is broken: /, () => 'Ask Claude to fix this: the app hit an error'],
+  [/^The app's checks fail, so "(.+?)" can't be kept yet\./, (match) => `Ask Claude to fix it: the checks for “${match[1]}” fail`],
+];
+
 // What the user typed, or null for harness-injected text (reminders, command output, skill bodies).
 const typedText = (text) => {
   const command = COMMAND_NAME.exec(text);
   if (command) {
-    // The studio types /effort itself when the mode changes (syncEffort): not something to show as a message.
-    if (command[1] === '/effort') return null;
+    // The studio types these itself (/effort when the mode changes, /clear at Keep and Discard): not messages of theirs.
+    if (command[1] === '/effort' || command[1] === '/clear') return null;
     return `${command[1]} ${COMMAND_ARGS.exec(text)?.[1] ?? ''}`.trim();
   }
   if (text.trimStart().startsWith('<') && !text.trimStart().startsWith('<pasted_content ')) {
     return null;
+  }
+  for (const [pattern, label] of STUDIO_SENT) {
+    const match = pattern.exec(text.trimStart());
+    if (match) return label(match);
   }
   return text.replace(PASTE_TAG, '');
 };

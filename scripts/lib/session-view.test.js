@@ -25,6 +25,13 @@ test('recordMessages: typed text, slash commands and interruptions; harness text
   assert.deepEqual(recordMessages({ type: 'user', message: { content: 'fix the target line' } }), [{ kind: 'you', text: 'fix the target line' }]);
   assert.deepEqual(recordMessages({ type: 'user', message: { content: '<command-name>/ship-it</command-name>\n<command-args>ABC-1</command-args>' } }), [{ kind: 'you', text: '/ship-it ABC-1' }]);
   assert.deepEqual(recordMessages({ type: 'user', message: { content: '<command-name>/effort</command-name>\n<command-args>medium</command-args>' } }), [], "the studio's own /effort isn't a message");
+  assert.deepEqual(recordMessages({ type: 'user', message: { content: '<command-name>/clear</command-name>\n<command-args></command-args>' } }), [], 'nor its /clear');
+  // What the studio writes for a button she pressed shows as the button, not the text.
+  const sent = (content) => recordMessages({ type: 'user', message: { content } })[0]?.text;
+  assert.equal(sent('Build the plan “Purple Dark Mode”: read it at /tmp/plan.html (published at https://claude.ai/x), then build it step by step.'), 'Build this: “Purple Dark Mode”');
+  assert.equal(sent("The app is broken: its server stopped with an error. Please find out why and fix it. The last 50 lines…"), 'Ask Claude to fix this: the app hit an error');
+  assert.equal(sent('The app\'s checks fail, so "dark mode" can\'t be kept yet. Please run `npm test`…'), 'Ask Claude to fix it: the checks for “dark mode” fail');
+  assert.equal(sent('Make the header purple'), 'Make the header purple', 'what she typed is shown as it is');
   assert.deepEqual(recordMessages({ type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] } }), [{ kind: 'note', text: 'Interrupted' }]);
   assert.deepEqual(recordMessages({ type: 'user', message: { content: '\n\n<pasted_content id="e38f">\nevent,count()\n$pageview,99\n</pasted_content id="e38f">\n' } }), [{ kind: 'you', text: '\n\n\nevent,count()\n$pageview,99\n\n' }]);
   assert.deepEqual(recordMessages({ type: 'user', message: { content: 'see this:\n<pasted_content id="a1">\nlog\n</pasted_content id="a1">' } }), [{ kind: 'you', text: 'see this:\n\nlog\n' }]);
