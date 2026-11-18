@@ -947,7 +947,16 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
               <BuildThis plan={plan} onSend={onBuildPlan} />
             </div>
           )}
-          {naming !== null && <StartFeature hint="Plans and changes are made as part of a feature. Name this one to start it; your message is sent once it has started." autoFocus onStarted={startedFeature} onCancel={() => setNaming(null)} />}
+          {/* In Plan or Build with no feature open, naming one is the first step: shown before anything is typed. A message sent
+              first waits here and goes once the feature has started. */}
+          {w?.feature === null && (w.mode === 'build' || w.mode === 'plan') && (
+            <StartFeature
+              hint={naming !== null ? 'Name the feature to start it. Your message is sent once it has started.' : 'Plans and changes are part of a feature. Name one to start it.'}
+              autoFocus={naming !== null}
+              onStarted={startedFeature}
+              onCancel={naming !== null ? () => setNaming(null) : undefined}
+            />
+          )}
           <Textarea
             ref={messageBox}
             aria-label="Message the selected session"
