@@ -130,7 +130,17 @@ test('studio on its own, or help, shows the help page; a wrong command or wrong 
     const bogus = spawnSync(STUDIO, ['bogus'], { encoding: 'utf8', env: t.env });
     assert.equal(bogus.status, 2);
     assert.equal(bogus.stderr.trim(), 'studio doesn\'t know "bogus". Type studio help for what it can do.');
-    assert.equal(spawnSync(STUDIO, ['switch'], { encoding: 'utf8', env: t.env }).stderr.trim(), "That's not how studio switch goes. It takes: studio switch <name>");
+    // A command without what it needs, or asked for help, shows its own help; switch lists the apps to choose from.
+    fs.mkdirSync(path.join(t.env.HOME, 'Studio', 'recipe-box', '.git'), { recursive: true });
+    const lone = spawnSync(STUDIO, ['switch'], { encoding: 'utf8', env: t.env });
+    assert.equal(lone.status, 2);
+    assert.match(lone.stderr, /^studio switch <name>\n/);
+    assert.match(lone.stderr, /Your apps:\n {4}recipe-box/);
+    for (const args of [['help', 'clone'], ['clone', '--help'], ['clone', '-h']]) {
+      const help = spawnSync(STUDIO, args, { encoding: 'utf8', env: t.env });
+      assert.equal(help.status, 0, args.join(' '));
+      assert.match(help.stdout, /^studio clone <source> \[<name>\]\n/);
+    }
   } finally {
     t.cleanup();
   }

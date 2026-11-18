@@ -80,6 +80,9 @@ WHISPER_MODEL="${STUDIO_WHISPER_MODEL:-$HOME/.whisper/ggml-small.en.bin}"
 WORKSPACE="${STUDIO_WORKSPACE:-studio}"
 CONFIG="$STUDIO_HOME/config.json"
 
+# A value from config.json, or nothing.
+config() { [ -f "$CONFIG" ] && jq -r "$1 // empty" "$CONFIG" || true; }
+
 # The help page: `studio`, `studio help`, --help or -h. Headings in bold in a terminal.
 help() {
   local b="" r=""
@@ -105,31 +108,115 @@ ${b}Your apps${r}
 
 ${b}When something's wrong${r}
   studio logs                Save the studio's logs to your Desktop, to send to whoever is helping you
-  studio help                This list
+  studio help [<command>]    This list, or one command's help (also: studio <command> --help)
 
 <name> is an app's folder in ~/Studio: lowercase letters, numbers and dashes, like my-app.
 HELP
 }
-# A command it knows given the wrong things: what it takes. Anything else: where to look.
-usage() {
-  local takes=""
-  case "${1:-}" in
-    up) takes="studio up [--dry-run]" ;;
-    new) takes="studio new <name> [--collaborator <GitHub user>]" ;;
-    switch) takes="studio switch <name>" ;;
-    clone) takes="studio clone <source> [<name>]" ;;
-    run) takes="studio run [<name>]" ;;
-    stop) takes="studio stop [<name>]" ;;
-    status | logs | down | restart | help) takes="studio $1" ;;
+# The apps in ~/Studio, one a line: ▸ for the one the studio works on, and whether each runs for real (studio run).
+list_apps() {
+  local dir name current marker real found=false
+  current="$(cd "$(config .appDir)" 2>/dev/null && pwd -P || true)"
+  for dir in "$HOME"/Studio/*/; do
+    [ -d "$dir.git" ] || continue
+    found=true
+    name=$(basename "$dir")
+    marker="  "
+    [ "$(cd "$dir" && pwd -P)" = "$current" ] && marker="▸ "
+    real=""
+    [ -f "$HOME/Studio/.live/$name/app.pid" ] && kill -0 "$(cat "$HOME/Studio/.live/$name/app.pid")" 2>/dev/null && real="running for real"
+    printf '  %s%-22s %s\n' "$marker" "$name" "$real"
+  done
+  if [ "$found" = true ]; then echo "  (▸ is the one the studio works on)"; else echo "  none yet: make one with studio new <name>"; fi
+}
+
+# One command's help: what it does, what it takes, and (for the ones taking an app) the apps to choose from.
+command_help() {
+  local b="" r=""
+  if [ -t 1 ]; then b=$'\033[1m'; r=$'\033[0m'; fi
+  case "$1" in
+    up)
+      printf '%sstudio up%s [--dry-run]\n\n' "$b" "$r"
+      echo "Starts the studio (Claude, the app, dictation) and opens it in your browser; one already running is left as it is."
+      echo "It updates the studio first. To start everything afresh, use studio restart."
+      echo
+      echo "  --dry-run   only print what each part would run" ;;
+    restart)
+      printf '%sstudio restart%s\n\n' "$b" "$r"
+      echo "Stops the studio if it's running, and starts it again on the newest version. Claude carries on its conversation."
+      echo "Not while Claude is working or waiting for an answer." ;;
+    down)
+      printf '%sstudio down%s\n\n' "$b" "$r"
+      echo "Stops the studio: Claude, the app's preview and dictation. Your app running for real (studio run) keeps running."
+      echo "Not while Claude is working or waiting for an answer." ;;
+    status)
+      printf '%sstudio status%s\n\n' "$b" "$r"
+      echo "Says what's running, which app the studio works on (and its feature), and which apps run for real." ;;
+    new)
+      printf '%sstudio new%s <name> [--collaborator <GitHub user>]\n\n' "$b" "$r"
+      echo "Makes a new app in ~/Studio/<name>, backs it up as a private GitHub repo, puts it in Applications, and switches to it."
+      echo "<name>: lowercase letters, numbers and dashes, like recipe-box."
+      echo
+      echo "  --collaborator <GitHub user>   invite someone to the app's repo, so they can help you"
+      echo
+      echo "Names already taken:"
+      list_apps ;;
+    switch)
+      printf '%sstudio switch%s <name>\n\n' "$b" "$r"
+      echo "Works on another of your apps: the studio restarts on it, and Claude carries on that app's own conversation."
+      echo
+      echo "Your apps:"
+      list_apps ;;
+    clone)
+      printf '%sstudio clone%s <source> [<name>]\n\n' "$b" "$r"
+      echo "Copies someone else's Studio app into ~/Studio and switches to it, from their latest kept version."
+      echo "Nothing is ever pushed back to them, and their data isn't copied (it isn't in git)."
+      echo
+      echo "  <source>   a GitHub URL, owner/repo, or a folder with the app's git repository"
+      echo "  <name>     what to call it here (default: the repo's name)"
+      echo
+      echo "  e.g.  studio clone sam-rivers/recipe-box"
+      echo "        studio clone https://github.com/sam-rivers/recipe-box my-recipes" ;;
+    run)
+      printf '%sstudio run%s [<name>]\n\n' "$b" "$r"
+      echo "Opens an app for real, on its own data, at http://localhost:${STUDIO_LIVE_PORT:-5001}: the newest version you kept."
+      echo "Without a name, the app the studio works on. Its icon in Applications does the same."
+      echo
+      echo "Your apps:"
+      list_apps ;;
+    stop)
+      printf '%sstudio stop%s [<name>]\n\n' "$b" "$r"
+      echo "Stops an app you opened for real with studio run. Without a name, the app the studio works on."
+      echo
+      echo "Your apps:"
+      list_apps ;;
+    logs)
+      printf '%sstudio logs%s\n\n' "$b" "$r"
+      echo "Saves the studio's logs in one zip on your Desktop, to send to whoever is helping you. Your messages to Claude aren't in it." ;;
+    help)
+      printf '%sstudio help%s [<command>]\n\n' "$b" "$r"
+      echo "The list of commands, or one command's help: studio help switch, or studio switch --help." ;;
+    *) return 1 ;;
   esac
-  if [ -n "$takes" ]; then echo "That's not how studio $1 goes. It takes: $takes" >&2
-  else echo "studio doesn't know \"${1:-}\". Type studio help for what it can do." >&2
-  fi
+}
+
+# A command used wrongly, or without what it needs: its help. Anything else: where to look.
+usage() {
+  if [ -n "${1:-}" ] && command_help "$1" >&2; then exit 2; fi
+  echo "studio doesn't know \"${1:-}\". Type studio help for what it can do." >&2
   exit 2
 }
 DRY_RUN=false
 case "${1:-}" in
-  "" | help | --help | -h) help; exit 0 ;;
+  "" | --help | -h) help; exit 0 ;;
+  help)
+    if [ -z "${2:-}" ]; then help; exit 0; fi
+    command_help "$2" || usage "$2"
+    exit 0 ;;
+esac
+# studio <command> --help (or -h): that command's help.
+case "${2:-}" in
+  --help | -h) command_help "$1" || usage "$1"; exit 0 ;;
 esac
 case "${1:-} ${2:-}" in
   "up ") ;;
@@ -162,7 +249,6 @@ if [ -z "${STUDIO_LOGGING:-}" ]; then
 fi
 
 q() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
-config() { [ -f "$CONFIG" ] && jq -r "$1 // empty" "$CONFIG" || true; }
 
 # An app's folder, from its name in ~/Studio or its folder.
 app_folder() {
