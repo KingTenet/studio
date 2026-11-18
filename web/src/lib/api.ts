@@ -77,6 +77,9 @@ const featureAction = async <T>(path: string, body: unknown, failed: string): Pr
 }
 /** Keep's first step: runs the app's tests and type check and writes the feature's summary (slow: tens of seconds). */
 export const checkFeature = () => featureAction<FeatureCheck>('/feature/check', {}, 'The tests could not be run.')
+/** One half of Keep's check: the app's checks ('gate': ok, results, version) or the summary ('summary': summary, version). */
+export const checkFeaturePart = <P extends 'gate' | 'summary'>(part: P) =>
+  featureAction<P extends 'gate' ? Pick<FeatureCheck, 'ok' | 'results' | 'version'> : Pick<FeatureCheck, 'summary' | 'summaryFallback' | 'version'>>('/feature/check', { part }, part === 'gate' ? "The app's checks could not be run." : 'The summary could not be written.')
 /** Keeps the feature as the next version, with the summary the user saw; `anyway` keeps it although its tests fail. */
 export const keepFeature = (summary: string, anyway: boolean) => featureAction<{ version: string; sha: string; summary: string }>('/feature/keep', { summary, anyway }, 'The feature could not be kept.')
 /** Throws the feature away: the code back to the latest version, the data back to how it was when the feature started. */

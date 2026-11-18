@@ -797,6 +797,10 @@ const sendToSession = async (req, res) => {
     sendJson(res, 409, { error: 'The session is waiting on a prompt. Answer it first.' });
     return;
   }
+  if (keepsUnderWay > 0) {
+    sendJson(res, 409, { error: 'A Keep is under way. Send your message once it has finished.' });
+    return;
+  }
   const refused = await withPaneLock(paneId, async () => {
     // Typed before Claude's input box is drawn (Claude Code starting or resuming), part of it would be left behind.
     if (!(await until(() => hasInputBox(paneScreen(paneId)), INPUT_BOX_WAIT_MS))) return { status: 409, error: 'Claude is still starting. Send your message again in a moment.' };
@@ -1445,15 +1449,33 @@ const startFeatureNow = async (req, res) => {
  * The first step of Keep: runs the tests it is gated on and writes the feature summary, side by side. Answers
  * { ok, results, version, summary, summaryFallback }; Keep itself (keepFeatureNow) refuses unless these passed for the same files.
  */
+// Keep's checks or the keep itself under way: a message to Claude now would change the app while it's being kept.
+let keepsUnderWay = 0;
+const whileKeeping = async (fn) => {
+  keepsUnderWay += 1;
+  try {
+    return await fn();
+  } finally {
+    keepsUnderWay -= 1;
+  }
+};
+
+/**
+ * Keep's first step: { part: 'gate' } runs the app's checks (npm test, typecheck), { part: 'summary' } writes the summary, and
+ * no part does both. The Keep dialog asks for the two at once, so it can show each as it finishes.
+ */
 const checkFeatureNow = async (req, res) => {
+  const { part } = JSON.parse((await readBody(req)) || '{}');
   const appDir = appInfo().dir;
   if (refuseWhileBusy(res, chatAgent(appDir), 'Keep it')) return;
   if (!readFeature(appDir).feature) {
     sendJson(res, 409, { error: 'No feature is being built.' });
     return;
   }
-  const [gate, summary] = await Promise.all([runGate(appDir), summarise(appDir)]);
-  sendJson(res, 200, { ...gate, version: nextVersion(appDir), summary: summary.text, summaryFallback: summary.fallback });
+  await whileKeeping(async () => {
+    const [gate, summary] = await Promise.all([part === 'summary' ? null : runGate(appDir), part === 'gate' ? null : summarise(appDir)]);
+    sendJson(res, 200, { ...(gate ?? {}), version: nextVersion(appDir), ...(summary ? { summary: summary.text, summaryFallback: summary.fallback } : {}) });
+  });
 };
 
 /**
@@ -1467,7 +1489,7 @@ const keepFeatureNow = async (req, res) => {
   if (refuseWhileBusy(res, chat, 'Keep it')) return;
   let kept;
   try {
-    kept = keepFeature(appDir, { summary: typeof summary === 'string' ? summary : '', anyway: anyway === true });
+    kept = await whileKeeping(async () => keepFeature(appDir, { summary: typeof summary === 'string' ? summary : '', anyway: anyway === true }));
   } catch (error) {
     sendJson(res, 409, { error: error.message });
     return;

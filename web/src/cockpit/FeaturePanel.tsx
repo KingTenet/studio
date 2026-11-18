@@ -1,10 +1,12 @@
-import { Check, KeyRound, LoaderCircle, Play, RotateCcw, Trash2, Undo2, Wrench } from 'lucide-react'
-import { useState } from 'react'
+import { cn } from 'cn'
+import { Check, KeyRound, LoaderCircle, Play, RotateCcw, Trash2, Undo2, Wrench, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { AlertDialog, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { useControls } from '@/components/controls/ControlsProvider'
 import { useTip } from '@/components/controls/Tip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { bringBack, checkFeature, discardFeature, goBackTo, keepFeature, sendToSession, startFeature } from '@/lib/api'
+import { bringBack, checkFeaturePart, discardFeature, goBackTo, keepFeature, sendToSession, startFeature } from '@/lib/api'
 import { plural } from '@/lib/format'
 import type { App, Checkpoint, Feature, FeatureCheck } from '@/lib/types'
 
@@ -71,77 +73,188 @@ export const StartFeature = ({ hint, onStarted, onCancel, autoFocus }: StartFeat
 // What Claude is sent by [Ask Claude to fix the tests]: the end of each failing run's output, on one line.
 const MAX_FAILURE = 1500
 
+type GatePart = Pick<FeatureCheck, 'ok' | 'results' | 'version'>
+type SummaryPart = Pick<FeatureCheck, 'summary' | 'summaryFallback' | 'version'>
+type Step<T> = { state: 'running' } | { state: 'done'; value: T } | { state: 'failed'; error: string }
+
+/** A step of Keep's check, as a line: a spinner while it runs, then a tick, a cross or what went wrong. */
+const StepLine = ({ step, running, done, failed }: { step: Step<unknown>; running: string; done: string; failed?: string | null }) => (
+  <li className="flex items-start gap-2 text-sm">
+    {step.state === 'running' ? (
+      <LoaderCircle className="mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground" />
+    ) : step.state === 'done' && !failed ? (
+      <Check className="mt-0.5 size-4 shrink-0 text-emerald-600" />
+    ) : (
+      <X className="mt-0.5 size-4 shrink-0 text-destructive" />
+    )}
+    <span className={cn(step.state === 'running' && 'text-muted-foreground')}>{step.state === 'running' ? running : step.state === 'failed' ? step.error : (failed ?? done)}</span>
+  </li>
+)
+
 /**
- * Keep and Discard. Keep first runs the tests and writes the summary; when the tests pass it shows the summary and asks
- * to confirm. When they fail, Keep is greyed out until the next checkpoint, with what failed, [Ask Claude to fix the
- * tests], [Run them again] and "keep anyway". Both wait while Claude is working.
+ * Keep, as one dialog that opens at once: it runs the app's checks and writes the summary side by side, showing each as it
+ * finishes, with room kept for the summary so nothing moves when it arrives. Clicking outside does nothing; Cancel (or Esc)
+ * closes it, and a check still running is then ignored. When the checks pass: [Keep as vN]. When they fail: what failed,
+ * [Ask Claude to fix it] and [Keep anyway]. While it's open the rest of the cockpit is covered, and the studio refuses
+ * messages to Claude, so nothing changes the app while it's kept. A passing check is reused until the next checkpoint.
  */
+const KeepDialog = ({ open, feature, runFor, onClose, onKept, onAskClaude }: { open: boolean; feature: Feature; runFor: string; onClose: () => void; onKept: () => void; onAskClaude: (failed: GatePart['results']) => void }) => {
+  const [gate, setGate] = useState<Step<GatePart>>({ state: 'running' })
+  const [summary, setSummary] = useState<Step<SummaryPart>>({ state: 'running' })
+  const [keeping, setKeeping] = useState(false)
+  const [error, setError] = useState('')
+  // Which opening a result belongs to: one that arrives after Cancel (or for an older opening) is dropped.
+  const opening = useRef(0)
+  const passed = useRef<{ for: string; gate: GatePart; summary: SummaryPart } | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const id = ++opening.current
+    setError('')
+    setKeeping(false)
+    const reuse = passed.current?.for === runFor ? passed.current : null
+    if (reuse) {
+      setGate({ state: 'done', value: reuse.gate })
+      setSummary({ state: 'done', value: reuse.summary })
+      return
+    }
+    setGate({ state: 'running' })
+    setSummary({ state: 'running' })
+    const settle = <T,>(set: (step: Step<T>) => void) => (found: T | { error: string }) => {
+      if (opening.current !== id) return
+      set('error' in (found as object) ? { state: 'failed', error: (found as { error: string }).error } : { state: 'done', value: found as T })
+    }
+    void checkFeaturePart('gate').then(settle<GatePart>(setGate))
+    void checkFeaturePart('summary').then(settle<SummaryPart>(setSummary))
+  }, [open, runFor])
+
+  const gateDone = gate.state === 'done' ? gate.value : null
+  const summaryDone = summary.state === 'done' ? summary.value : null
+  useEffect(() => {
+    if (gateDone?.ok && summaryDone) passed.current = { for: runFor, gate: gateDone, summary: summaryDone }
+  }, [gateDone, summaryDone, runFor])
+  const failed = gateDone && !gateDone.ok ? gateDone.results.filter((result) => !result.ok) : []
+  const version = gateDone?.version ?? summaryDone?.version ?? 'the next version'
+
+  const cancel = () => {
+    opening.current += 1
+    onClose()
+  }
+  const keep = async (anyway: boolean) => {
+    if (!summaryDone) return
+    setKeeping(true)
+    setError('')
+    const kept = await keepFeature(summaryDone.summary, anyway)
+    setKeeping(false)
+    if ('error' in kept) {
+      // Refused (the app changed since the checks ran, say): the next Keep runs them again.
+      passed.current = null
+      return setError(kept.error)
+    }
+    passed.current = null
+    onKept()
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={(next) => !next && !keeping && cancel()}>
+      <AlertDialogContent className="data-[size=default]:max-w-md data-[size=default]:sm:max-w-md">
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            Keep “{feature.name}” as {version}?
+          </AlertDialogTitle>
+        </AlertDialogHeader>
+        <ul className="grid gap-1.5">
+          <StepLine step={gate} running="Running the app's checks…" done="The app's checks pass" failed={failed.length ? "The app's checks fail" : null} />
+          <StepLine step={summary} running="Writing a summary of what this feature does…" done="Summary written" />
+        </ul>
+        {/* Room kept for the summary, so the dialog doesn't grow when it arrives. */}
+        <div className="min-h-24 rounded-md border bg-muted/40 p-2.5 text-sm">
+          {summaryDone ? (
+            <p className="whitespace-pre-wrap">{summaryDone.summary}</p>
+          ) : (
+            <div className="grid animate-pulse gap-2 pt-1" aria-label="Writing the summary">
+              <div className="h-3 w-11/12 rounded bg-muted-foreground/15" />
+              <div className="h-3 w-4/5 rounded bg-muted-foreground/15" />
+              <div className="h-3 w-3/5 rounded bg-muted-foreground/15" />
+            </div>
+          )}
+        </div>
+        {failed.length > 0 && (
+          <div className="grid gap-1">
+            {failed.map((result) => (
+              <details key={result.name} className="text-xs">
+                <summary className="cursor-pointer text-destructive">{result.name} failed</summary>
+                <pre className="mt-1 max-h-32 overflow-auto rounded bg-muted p-1.5 text-[11px] whitespace-pre-wrap [overflow-wrap:anywhere]">{result.output || '(no output)'}</pre>
+              </details>
+            ))}
+          </div>
+        )}
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <AlertDialogFooter>
+          <Button variant="outline" disabled={keeping} onClick={cancel}>
+            Cancel
+          </Button>
+          {failed.length > 0 ? (
+            <>
+              <Button variant="ghost" disabled={keeping || !summaryDone} onClick={() => void keep(true)}>
+                Keep anyway
+              </Button>
+              <Button
+                disabled={keeping}
+                onClick={() => {
+                  cancel()
+                  onAskClaude(failed)
+                }}
+              >
+                <Wrench /> Ask Claude to fix it
+              </Button>
+            </>
+          ) : (
+            <Button disabled={keeping || !gateDone?.ok || !summaryDone} onClick={() => void keep(false)}>
+              {keeping ? <LoaderCircle className="animate-spin" /> : <Check />} Keep as {version}
+            </Button>
+          )}
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
+/** Keep (the KeepDialog) and Discard. Both wait while Claude is working. */
 const KeepOrDiscard = ({ w, feature }: { w: App; feature: Feature }) => {
   const tip = useTip()
   const { confirm, refresh } = useControls()
   const chat = w.agents.find((agent) => agent.tab !== 'Artifacts')
   const claudeBusy = chat?.status === 'working' || chat?.status === 'blocked'
-  // A test run counts until the next checkpoint: then Keep runs them again.
+  // A passing check counts until the next checkpoint.
   const runFor = feature.checkpoints.at(-1)?.sha ?? feature.base
-  const [run, setRun] = useState<{ for: string; check: FeatureCheck } | null>(null)
-  const check = run?.for === runFor ? run.check : null
-  const [doing, setDoing] = useState<'checking' | 'keeping' | 'discarding' | null>(null)
+  const [keepOpen, setKeepOpen] = useState(false)
+  const [discarding, setDiscarding] = useState(false)
   const [message, setMessage] = useState('')
-  const failed = check && !check.ok ? check.results.filter((result) => !result.ok) : []
-  const disabled = claudeBusy || doing !== null
+  const disabled = claudeBusy || discarding || keepOpen
   const why = claudeBusy ? (chat?.status === 'working' ? 'Claude is working…' : 'Claude is waiting on a question') : ''
 
-  const keep = async (found: FeatureCheck, anyway: boolean) => {
-    const ok = await confirm(
-      `Keep "${feature.name}" as ${found.version}?\n${anyway ? 'Its tests fail, and it will be kept as it is. ' : ''}This goes into the app's list of features:\n\n${found.summary}`
-    )
-    // Closed without confirming: said so, and the passing run is kept, so the next Keep asks again straight away.
-    if (!ok) return setMessage("Not kept yet. Press Keep when you're ready.")
-    setDoing('keeping')
-    const kept = await keepFeature(found.summary, anyway)
-    setDoing(null)
-    if ('error' in kept) {
-      // Refused (the app changed since the tests ran, say): the next Keep runs them again.
-      setRun(null)
-      return setMessage(kept.error)
-    }
-    setMessage('')
-    setRun(null)
-    await refresh()
-  }
-  const runTests = async () => {
-    // Nothing has changed since the tests passed: no need to run them (and write the summary) again.
-    if (check?.ok) return keep(check, false)
-    setDoing('checking')
-    setMessage('')
-    const found = await checkFeature()
-    setDoing(null)
-    if ('error' in found) return setMessage(found.error)
-    setRun({ for: runFor, check: found })
-    if (found.ok) await keep(found, false)
-  }
   const discard = async () => {
     const latest = w.versions.at(-1)?.tag ?? 'the latest version'
     const ok = await confirm(
       `Discard "${feature.name}" and its ${plural(feature.checkpoints.length, 'checkpoint')}?\nThe app goes back to ${latest}, and its data back to how it was when you started "${feature.name}". This can't be undone.`
     )
     if (!ok) return
-    setDoing('discarding')
+    setDiscarding(true)
     const discarded = await discardFeature()
-    setDoing(null)
+    setDiscarding(false)
     if ('error' in discarded) return setMessage(discarded.error)
     setMessage('')
-    setRun(null)
     await refresh()
   }
-  const askClaude = async () => {
+  const askClaude = async (failed: GatePart['results']) => {
     if (!chat) return setMessage("Claude isn't running. Start it from the chat, then ask again.")
     const output = failed.map((result) => `${result.name}: …${result.output.slice(-Math.floor(MAX_FAILURE / failed.length))}`).join(' ')
     const error = await sendToSession({
       paneId: chat.paneId,
-      text: `The tests fail, so "${feature.name}" can't be kept yet. Please run \`npm test\` and \`npm run typecheck\` and fix what fails. The end of what failed: ${output}`,
+      text: `The app's checks fail, so "${feature.name}" can't be kept yet. Please run \`npm test\` and \`npm run typecheck\` and fix what fails. The end of what failed: ${output}`,
     })
-    setMessage(error ?? 'Sent to Claude. Keep runs the tests again after its next change.')
+    setMessage(error ?? 'Sent to Claude. Press Keep again once it has fixed them.')
   }
 
   return (
@@ -149,41 +262,32 @@ const KeepOrDiscard = ({ w, feature }: { w: App; feature: Feature }) => {
       <div className="flex flex-wrap items-center gap-1.5">
         <Button
           size="sm"
-          disabled={disabled || failed.length > 0}
-          title={tip(why || (failed.length ? 'The tests fail: fix them, or keep it anyway' : `Run the tests, then keep "${feature.name}" as the next version`))}
-          onClick={() => void runTests()}
+          disabled={disabled}
+          title={tip(why || `Check the app, then keep "${feature.name}" as the next version`)}
+          onClick={() => {
+            setMessage('')
+            setKeepOpen(true)
+          }}
         >
-          {doing === 'checking' || doing === 'keeping' ? <LoaderCircle className="animate-spin" /> : <Check />} Keep
+          <Check /> Keep
         </Button>
         <Button size="sm" variant="destructive" disabled={disabled} title={tip(why || `Throw "${feature.name}" away and go back to the latest version`)} onClick={() => void discard()}>
-          {doing === 'discarding' ? <LoaderCircle className="animate-spin" /> : <Trash2 />} Discard
+          {discarding ? <LoaderCircle className="animate-spin" /> : <Trash2 />} Discard
         </Button>
       </div>
       {claudeBusy && <p className="text-xs text-muted-foreground">{why}</p>}
-      {doing === 'checking' && <p className="text-xs text-muted-foreground">Running the tests and writing the summary…</p>}
-      {failed.length > 0 && (
-        <div className="grid gap-1.5 rounded-lg border border-destructive/40 bg-destructive/5 p-2">
-          <p className="text-sm">The tests fail, so this can't be kept yet.</p>
-          {failed.map((result) => (
-            <details key={result.name} className="text-xs">
-              <summary className="cursor-pointer text-destructive">{result.name} failed</summary>
-              <pre className="mt-1 max-h-40 overflow-auto rounded bg-muted p-1.5 text-[11px] whitespace-pre-wrap [overflow-wrap:anywhere]">{result.output || '(no output)'}</pre>
-            </details>
-          ))}
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Button size="xs" variant="outline" disabled={disabled} onClick={() => void askClaude()}>
-              <Wrench /> Ask Claude to fix the tests
-            </Button>
-            <Button size="xs" variant="ghost" disabled={disabled} onClick={() => void runTests()}>
-              Run them again
-            </Button>
-            <Button size="xs" variant="link" className="ml-auto px-0 text-muted-foreground" disabled={disabled} onClick={() => void keep(check!, true)}>
-              keep anyway
-            </Button>
-          </div>
-        </div>
-      )}
       {message && <p className="text-xs text-muted-foreground">{message}</p>}
+      <KeepDialog
+        open={keepOpen}
+        feature={feature}
+        runFor={runFor}
+        onClose={() => setKeepOpen(false)}
+        onKept={() => {
+          setKeepOpen(false)
+          void refresh()
+        }}
+        onAskClaude={(failed) => void askClaude(failed)}
+      />
     </div>
   )
 }
