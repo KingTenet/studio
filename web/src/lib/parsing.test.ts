@@ -36,6 +36,17 @@ describe('parseMarkdown', () => {
   })
 })
 
+describe('parseMarkdown lists', () => {
+  it('reads runs of - and 1. lines as lists, between paragraphs', () => {
+    expect(parseMarkdown('Adds a **dark mode**.\n\n- A switch in the header.\n- Remembered next time.\n\n1. One\n2. Two\nThat is all.')).toEqual([
+      { kind: 'para', parts: [{ kind: 'text', text: 'Adds a ' }, { kind: 'bold', text: 'dark mode' }, { kind: 'text', text: '.' }] },
+      { kind: 'list', ordered: false, items: [[{ kind: 'text', text: 'A switch in the header.' }], [{ kind: 'text', text: 'Remembered next time.' }]] },
+      { kind: 'list', ordered: true, items: [[{ kind: 'text', text: 'One' }], [{ kind: 'text', text: 'Two' }]] },
+      { kind: 'para', parts: [{ kind: 'text', text: 'That is all.' }] },
+    ])
+  })
+})
+
 describe('parseMarkdown tables', () => {
   it('reads a table between paragraphs, with inline markdown in its cells', () => {
     expect(parseMarkdown('They stand like this:\n\n| # | Item |\n|---|---|\n| 1 | Renamed (`abc123`) |\n| 2 | **Done** |\n\nThat is all.')).toEqual([

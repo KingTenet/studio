@@ -1,6 +1,5 @@
 import { Check, ChevronRight, ChevronsLeft, Clock, Crosshair, Hourglass, Keyboard, Layers, LoaderCircle, Paperclip, Pause, Play, PlugZap, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type ReactNode } from 'react'
-import { SmartLink } from '@/components/controls/ArtifactLink'
 import { useControls } from '@/components/controls/ControlsProvider'
 import { useTip } from '@/components/controls/Tip'
 import { useSharedPref } from '@/components/controls/useSharedPref'
@@ -13,7 +12,7 @@ import { FOCUS_CHAT_EVENT } from '@/lib/artifacts'
 import { BuildThis } from './BuildThis'
 import { focusAgent, pressEsc, sendToSession, setMode, uploadFile } from '@/lib/api'
 import { agentLook, sessionControls, sessionName, waitingOn, type ChipModel, type LookName, type StartModel } from '@/lib/controls'
-import { parseMarkdown, type Inline as InlinePart } from '@/lib/markdown'
+import { Markdown } from './Markdown'
 import { resolveQueue, type ChatMessage } from '@/lib/queue'
 import type { Agent, AgentStatus, App, Mode, SessionPrompt } from '@/lib/types'
 import { cn } from 'cn'
@@ -21,65 +20,6 @@ import { StartFeature } from './FeaturePanel'
 import { useDictation } from './MicButton'
 import { CloseButton, PinButton } from './useAutoHide'
 import { useSession, type ChatView } from './useSession'
-
-const Parts = ({ parts }: { parts: InlinePart[] }) => (
-  <>
-    {parts.map((part, i) =>
-      part.kind === 'link' ? (
-        <SmartLink key={i} href={part.href} className={cn('text-sky-700 underline decoration-sky-700/30 underline-offset-2 hover:decoration-current dark:text-sky-400 dark:decoration-sky-400/30', part.code && 'rounded bg-muted px-1 font-mono text-[0.85em]')}>
-          {part.text}
-        </SmartLink>
-      ) : part.kind === 'code' ? (
-        <code key={i} className="rounded bg-muted px-1 font-mono text-[0.85em]">
-          {part.text}
-        </code>
-      ) : part.kind === 'bold' ? (
-        <b key={i}>{part.text}</b>
-      ) : (
-        part.text
-      )
-    )}
-  </>
-)
-
-export const Markdown = ({ text }: { text: string }) => (
-  <>
-    {parseMarkdown(text).map((block, i) =>
-      block.kind === 'code' ? (
-        <pre key={i} className="my-1 rounded-md bg-muted px-2.5 py-1.5 font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
-          {block.text}
-        </pre>
-      ) : block.kind === 'table' ? (
-        <div key={i} className="my-1 overflow-x-auto whitespace-normal">
-          <table className="text-xs">
-            <thead>
-              <tr>
-                {block.head.map((cell, j) => (
-                  <th key={j} className="border px-2 py-1 text-left font-medium">
-                    <Parts parts={cell} />
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {block.rows.map((row, j) => (
-                <tr key={j}>
-                  {row.map((cell, k) => (
-                    <td key={k} className="border px-2 py-1 align-top">
-                      <Parts parts={cell} />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <Parts key={i} parts={block.parts} />
-      )
-    )}
-  </>
-)
 
 // `index` marks one of your messages (data-you) so the transcript can pin it once it scrolls above the top.
 export const Message = ({ message, index }: { message: ChatMessage; index?: number }) => {

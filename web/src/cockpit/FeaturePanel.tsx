@@ -3,6 +3,7 @@ import { Check, KeyRound, LoaderCircle, Play, RotateCcw, Trash2, Undo2, Wrench, 
 import { useEffect, useRef, useState } from 'react'
 import { AlertDialog, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { useControls } from '@/components/controls/ControlsProvider'
+import { Markdown } from './Markdown'
 import { useTip } from '@/components/controls/Tip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -98,7 +99,7 @@ const StepLine = ({ step, running, done, failed }: { step: Step<unknown>; runnin
  * [Ask Claude to fix it] and [Keep anyway]. While it's open the rest of the cockpit is covered, and the studio refuses
  * messages to Claude, so nothing changes the app while it's kept. A passing check is reused until the next checkpoint.
  */
-const KeepDialog = ({ open, feature, runFor, onClose, onKept, onAskClaude }: { open: boolean; feature: Feature; runFor: string; onClose: () => void; onKept: () => void; onAskClaude: (failed: GatePart['results']) => void }) => {
+const KeepDialog = ({ open, feature, runFor, nextVersion, onClose, onKept, onAskClaude }: { open: boolean; feature: Feature; runFor: string; nextVersion: string; onClose: () => void; onKept: () => void; onAskClaude: (failed: GatePart['results']) => void }) => {
   const [gate, setGate] = useState<Step<GatePart>>({ state: 'running' })
   const [summary, setSummary] = useState<Step<SummaryPart>>({ state: 'running' })
   const [keeping, setKeeping] = useState(false)
@@ -134,7 +135,8 @@ const KeepDialog = ({ open, feature, runFor, onClose, onKept, onAskClaude }: { o
     if (gateDone?.ok && summaryDone) passed.current = { for: runFor, gate: gateDone, summary: summaryDone }
   }, [gateDone, summaryDone, runFor])
   const failed = gateDone && !gateDone.ok ? gateDone.results.filter((result) => !result.ok) : []
-  const version = gateDone?.version ?? summaryDone?.version ?? 'the next version'
+  // Known before the server answers (the next number after the last version), so the title and button never change width.
+  const version = gateDone?.version ?? summaryDone?.version ?? nextVersion
 
   const cancel = () => {
     opening.current += 1
@@ -157,7 +159,7 @@ const KeepDialog = ({ open, feature, runFor, onClose, onKept, onAskClaude }: { o
 
   return (
     <AlertDialog open={open} onOpenChange={(next) => !next && !keeping && cancel()}>
-      <AlertDialogContent className="data-[size=default]:max-w-md data-[size=default]:sm:max-w-md">
+      <AlertDialogContent className="data-[size=default]:max-w-lg data-[size=default]:sm:max-w-lg">
         <AlertDialogHeader>
           <AlertDialogTitle>
             Keep “{feature.name}” as {version}?
@@ -167,10 +169,22 @@ const KeepDialog = ({ open, feature, runFor, onClose, onKept, onAskClaude }: { o
           <StepLine step={gate} running="Running the app's checks…" done="The app's checks pass" failed={failed.length ? "The app's checks fail" : null} />
           <StepLine step={summary} running="Writing a summary of what this feature does…" done="Summary written" />
         </ul>
-        {/* Room kept for the summary, so the dialog doesn't grow when it arrives. */}
-        <div className="min-h-24 rounded-md border bg-muted/40 p-2.5 text-sm">
+        {/* A fixed-size box for the summary (and what failed), scrolling inside, so the dialog never changes size. */}
+        <div className="h-56 overflow-y-auto rounded-md border bg-muted/40 px-3 py-2.5 text-sm leading-relaxed">
+          {failed.length > 0 && (
+            <div className="mb-2 grid gap-1 border-b pb-2">
+              {failed.map((result) => (
+                <details key={result.name} className="text-xs">
+                  <summary className="cursor-pointer text-destructive">{result.name} failed</summary>
+                  <pre className="mt-1 max-h-32 overflow-auto rounded bg-muted p-1.5 text-[11px] whitespace-pre-wrap [overflow-wrap:anywhere]">{result.output || '(no output)'}</pre>
+                </details>
+              ))}
+            </div>
+          )}
           {summaryDone ? (
-            <p className="whitespace-pre-wrap">{summaryDone.summary}</p>
+            <div className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+              <Markdown text={summaryDone.summary} />
+            </div>
           ) : (
             <div className="grid animate-pulse gap-2 pt-1" aria-label="Writing the summary">
               <div className="h-3 w-11/12 rounded bg-muted-foreground/15" />
@@ -179,38 +193,30 @@ const KeepDialog = ({ open, feature, runFor, onClose, onKept, onAskClaude }: { o
             </div>
           )}
         </div>
-        {failed.length > 0 && (
-          <div className="grid gap-1">
-            {failed.map((result) => (
-              <details key={result.name} className="text-xs">
-                <summary className="cursor-pointer text-destructive">{result.name} failed</summary>
-                <pre className="mt-1 max-h-32 overflow-auto rounded bg-muted p-1.5 text-[11px] whitespace-pre-wrap [overflow-wrap:anywhere]">{result.output || '(no output)'}</pre>
-              </details>
-            ))}
-          </div>
-        )}
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {/* Its line is always there, so an error doesn't push the buttons down. */}
+        <p className="min-h-5 text-sm text-destructive">{error}</p>
         <AlertDialogFooter>
+          {/* Always there (at the far left), so the buttons don't move: offered only when the checks fail. */}
+          <Button variant="ghost" className={cn('sm:mr-auto', failed.length === 0 && 'invisible')} disabled={keeping || !summaryDone || failed.length === 0} onClick={() => void keep(true)}>
+            Keep anyway
+          </Button>
           <Button variant="outline" disabled={keeping} onClick={cancel}>
             Cancel
           </Button>
+          {/* One width for both of its jobs, so swapping them doesn't move anything. */}
           {failed.length > 0 ? (
-            <>
-              <Button variant="ghost" disabled={keeping || !summaryDone} onClick={() => void keep(true)}>
-                Keep anyway
-              </Button>
-              <Button
-                disabled={keeping}
-                onClick={() => {
-                  cancel()
-                  onAskClaude(failed)
-                }}
-              >
-                <Wrench /> Ask Claude to fix it
-              </Button>
-            </>
+            <Button
+              className="w-44"
+              disabled={keeping}
+              onClick={() => {
+                cancel()
+                onAskClaude(failed)
+              }}
+            >
+              <Wrench /> Ask Claude to fix it
+            </Button>
           ) : (
-            <Button disabled={keeping || !gateDone?.ok || !summaryDone} onClick={() => void keep(false)}>
+            <Button className="w-44" disabled={keeping || !gateDone?.ok || !summaryDone} onClick={() => void keep(false)}>
               {keeping ? <LoaderCircle className="animate-spin" /> : <Check />} Keep as {version}
             </Button>
           )}
@@ -281,6 +287,7 @@ const KeepOrDiscard = ({ w, feature }: { w: App; feature: Feature }) => {
         open={keepOpen}
         feature={feature}
         runFor={runFor}
+        nextVersion={`v${Math.max(0, ...w.versions.map((version) => Number(version.tag.slice(1)) || 0)) + 1}`}
         onClose={() => setKeepOpen(false)}
         onKept={() => {
           setKeepOpen(false)
