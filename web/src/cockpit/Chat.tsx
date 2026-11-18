@@ -675,6 +675,7 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
   const shown = notice?.text || pending || hint?.text || ''
   const shownFull = notice?.text || (pending ? `Text typed in Claude's window wasn't sent: “${stuckInput}”. Clear it to send yours.` : hint?.full) || ''
   const wraps = Boolean(notice?.error)
+  const needsFeature = Boolean(w && !w.preview && w.feature === null && (w.mode === 'build' || w.mode === 'plan'))
   const name = placeholder ? 'Claude' : agent ? (agent.title ?? sessionName(w, agent)) : (stopped?.title ?? 'claude')
   const queuedRow = queued && (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-0.5 opacity-60">
@@ -916,11 +917,26 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
                 <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{plural(w.feature.checkpoints.length, 'checkpoint')}</span>
               </>
             ) : (
-              <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">None yet{w.mode === 'ask' ? '' : ': name one below to start'}</span>
+              <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">None yet</span>
             )}
           </div>
         )}
-        {body}
+        {/* In Plan or Build with no feature open, the chat shows what the Feature panel does, starting one, in place of the
+            conversation: that comes once it's named. In Ask, the conversation shows as ever. */}
+        {needsFeature ? (
+          <div className="row-start-3 grid min-h-0 content-start overflow-y-auto px-8 pt-8">
+            <section className="grid gap-2 rounded-xl border bg-card p-3">
+              <StartFeature
+                hint={naming !== null ? 'Name the feature to start it. Your message is sent once it has started.' : 'No feature in progress. Name one to start building it.'}
+                autoFocus={naming !== null}
+                onStarted={startedFeature}
+                onCancel={naming !== null ? () => setNaming(null) : undefined}
+              />
+            </section>
+          </div>
+        ) : (
+          body
+        )}
         {dictation.pill}
         <div className="row-start-4 grid gap-2 border-t px-8 py-3">
           {attachments.length + dropped.length > 0 && (
@@ -966,16 +982,6 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
               </span>
               <BuildThis plan={plan} onSend={onBuildPlan} />
             </div>
-          )}
-          {/* In Plan or Build with no feature open, naming one is the first step: shown before anything is typed. A message sent
-              first waits here and goes once the feature has started. */}
-          {w?.feature === null && (w.mode === 'build' || w.mode === 'plan') && (
-            <StartFeature
-              hint={naming !== null ? 'Name the feature to start it. Your message is sent once it has started.' : 'Plans and changes are part of a feature. Name one to start it.'}
-              autoFocus={naming !== null}
-              onStarted={startedFeature}
-              onCancel={naming !== null ? () => setNaming(null) : undefined}
-            />
           )}
           <Textarea
             ref={messageBox}
