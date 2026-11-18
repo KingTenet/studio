@@ -33,3 +33,6 @@ export const pickLabel = (pick: ArtifactPick) => (pick.text || pick.heading || p
 /** Asks the cockpit's chat to take the keyboard back (after a click or a pick in an artifact). */
 export const FOCUS_CHAT_EVENT = 'studio-focus-chat'
 export const focusChat = () => window.dispatchEvent(new Event(FOCUS_CHAT_EVENT))
+/** Opens the chat (pinning it when it isn't) and puts the cursor in its message box: after a feature is started, say. */
+export const OPEN_CHAT_EVENT = 'studio-open-chat'
+export const openChat = () => window.dispatchEvent(new Event(OPEN_CHAT_EVENT))

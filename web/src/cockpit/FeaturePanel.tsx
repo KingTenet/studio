@@ -3,6 +3,7 @@ import { Check, Hourglass, KeyRound, LoaderCircle, Play, RotateCcw, Trash2, Undo
 import { useEffect, useRef, useState } from 'react'
 import { AlertDialog, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { useControls } from '@/components/controls/ControlsProvider'
+import { openChat } from '@/lib/artifacts'
 import { Markdown } from './Markdown'
 import { useTip } from '@/components/controls/Tip'
 import { Button } from '@/components/ui/button'
@@ -401,7 +402,7 @@ const Checkpoints = ({ w, feature }: { w: App; feature: Feature }) => {
 export const FeaturePanel = ({ w }: { w: App | null }) => {
   const feature = w?.feature
   if (w?.preview && !feature) return <p className="text-sm text-muted-foreground">You're previewing {w.preview.tag}. Go back to the latest version to start a feature.</p>
-  if (!w || !feature) return <StartFeature hint="No feature in progress. Name one to start building it." />
+  if (!w || !feature) return <StartFeature hint="No feature in progress. Name one to start building it." onStarted={openChat} />
   return (
     <div className="grid gap-2">
       <div className="flex items-baseline gap-2">

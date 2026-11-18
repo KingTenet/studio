@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { parseAnsi, type AnsiStyle } from '@/lib/ansi'
-import { FOCUS_CHAT_EVENT } from '@/lib/artifacts'
+import { FOCUS_CHAT_EVENT, OPEN_CHAT_EVENT, openChat } from '@/lib/artifacts'
 import { BuildThis } from './BuildThis'
 import { focusAgent, pressEsc, sendToSession, setMode, uploadFile } from '@/lib/api'
 import { agentLook, sessionControls, sessionName, waitingOn, type ChipModel, type LookName, type StartModel } from '@/lib/controls'
@@ -532,6 +532,23 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
   // The toggle by Send: with it on, the box takes the keyboard back whenever it can; off, focus stays where you put it.
   const [keepFocus, setKeepFocus] = useSharedPref('cockpit:keepFocus', true)
   const sticky = stickyFocus && keepFocus
+  // Asked to open (a feature was just started): pinned if it isn't, opened if collapsed, then the cursor in the message box,
+  // once the box is there.
+  const wantFocus = useRef(false)
+  useEffect(() => {
+    const open = () => {
+      if (!pinned) onTogglePin?.()
+      else if (collapsed) onExpand?.()
+      wantFocus.current = true
+      setTimeout(() => {
+        if (!wantFocus.current) return
+        wantFocus.current = false
+        messageBox.current?.focus({ preventScroll: true })
+      }, 250)
+    }
+    window.addEventListener(OPEN_CHAT_EVENT, open)
+    return () => window.removeEventListener(OPEN_CHAT_EVENT, open)
+  }, [pinned, collapsed, onTogglePin, onExpand])
   useEffect(() => {
     if (!sticky) return
     const take = () => {
@@ -665,6 +682,7 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
   const startedFeature = () => {
     const message = naming
     setNaming(null)
+    if (!message) openChat()
     if (!agent || !message) return
     setText('')
     void deliver(agent.paneId, message)
