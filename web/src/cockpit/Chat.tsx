@@ -10,7 +10,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { parseAnsi, type AnsiStyle } from '@/lib/ansi'
 import { FOCUS_CHAT_EVENT, OPEN_CHAT_EVENT, openChat } from '@/lib/artifacts'
 import { BuildThis } from './BuildThis'
-import { focusAgent, pressEsc, sendToSession, setMode, uploadFile } from '@/lib/api'
+import { pressEsc, sendToSession, setMode, uploadFile } from '@/lib/api'
 import { agentLook, sessionControls, sessionName, waitingOn, type ChipModel, type LookName, type StartModel } from '@/lib/controls'
 import { Markdown } from './Markdown'
 import { resolveQueue, type ChatMessage } from '@/lib/queue'
@@ -435,20 +435,6 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
       document.removeEventListener('visibilitychange', onReturn)
     }
   }, [])
-  // The chat in view is herdr's focused pane too: on coming back to this tab or window, and on showing another session while it has focus.
-  const shownPane = collapsed ? null : (agent?.paneId ?? null)
-  useEffect(() => {
-    if (!shownPane) return
-    const focusInHerdr = () => void focusAgent(shownPane).catch(() => undefined)
-    const onReturn = () => document.visibilityState === 'visible' && focusInHerdr()
-    if (document.hasFocus()) focusInHerdr()
-    window.addEventListener('focus', onReturn)
-    document.addEventListener('visibilitychange', onReturn)
-    return () => {
-      window.removeEventListener('focus', onReturn)
-      document.removeEventListener('visibilitychange', onReturn)
-    }
-  }, [shownPane])
   const { session, poll } = useSession(label, agent?.paneId ?? stopped?.paneId ?? null, view, stopped?.sessionId ?? null)
   const [text, setText] = useState('')
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null)
