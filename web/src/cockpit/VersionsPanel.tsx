@@ -83,42 +83,46 @@ export const VersionsPanel = ({ w }: { w: App | null }) => {
   return (
     <div className="grid gap-2">
       {why && w.versions.length > 1 && <p className="text-xs text-muted-foreground">{why}</p>}
-      <ol className="grid gap-2.5">
+      {/* Every version has the same two lines (its name, then its actions), with a rule between them; the latest is tinted. */}
+      <ol className="-mx-1.5 grid [&>li+li]:border-t">
         {[...w.versions].reverse().map((version) => {
           const previewing = w.preview?.tag === version.tag
+          const isLatest = version === latest
+          const busy = Boolean(why) || doing !== null
           return (
-            <li key={version.tag} className={cn('grid gap-1', previewing && '-mx-1.5 rounded-lg bg-amber-500/10 px-1.5 py-1 ring-1 ring-amber-500/40')}>
-              <div className="flex items-baseline gap-1.5">
-                <span className="shrink-0 font-mono text-xs text-muted-foreground">{version.tag}</span>
-                <span className="min-w-0 text-sm [overflow-wrap:anywhere]">{version.name}</span>
-                {version === latest && <span className="ml-auto shrink-0 text-[10px] tracking-wide text-muted-foreground uppercase">latest</span>}
-                {previewing && <span className="ml-auto shrink-0 text-[10px] tracking-wide text-amber-700 uppercase dark:text-amber-400">previewing</span>}
+            <li key={version.tag} className={cn('grid gap-1.5 px-1.5 py-2.5', isLatest && !previewing && 'rounded-md bg-muted/60', previewing && 'rounded-md bg-amber-500/10 ring-1 ring-amber-500/40')}>
+              <div className="flex items-center gap-2">
+                <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] leading-none text-muted-foreground tabular-nums">{version.tag}</span>
+                <span className={cn('min-w-0 flex-1 text-sm [overflow-wrap:anywhere]', isLatest && 'font-medium')}>{version.name}</span>
+                {previewing ? (
+                  <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium tracking-wide text-amber-700 uppercase dark:text-amber-400">Previewing</span>
+                ) : (
+                  isLatest && <span className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium tracking-wide text-emerald-700 uppercase dark:text-emerald-400">Latest</span>
+                )}
               </div>
-              {version.sessions.length > 0 && (
-                <div className="flex flex-wrap items-center gap-x-3">
-                  {version.sessions.map((sessionId, i) => (
-                    <Button key={sessionId} size="xs" variant="link" className="h-5 px-0 text-muted-foreground" title={tip('Read the conversation with Claude that built this version')} onClick={() => setReading({ version, sessionId })}>
-                      <MessageSquareText /> how this was built{version.sessions.length > 1 ? ` (part ${i + 1})` : ''}
-                    </Button>
-                  ))}
-                </div>
-              )}
-              {version !== latest && (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {previewing ? (
-                    <Button size="xs" variant="outline" disabled={Boolean(why) || doing !== null} title={tip(why || 'Go back to the latest version: the code and data as they were')} onClick={() => void act('end', endPreview)}>
-                      {doing === 'end' ? <LoaderCircle className="animate-spin" /> : <Undo2 />} back to latest
+              <div className="-ml-1.5 flex min-h-6 flex-wrap items-center gap-x-0.5 gap-y-0.5">
+                {!isLatest &&
+                  (previewing ? (
+                    <Button size="xs" variant="ghost" className="text-muted-foreground" disabled={busy} title={tip(why || 'Go back to the latest version: the code and data as they were')} onClick={() => void act('end', endPreview)}>
+                      {doing === 'end' ? <LoaderCircle className="animate-spin" /> : <Undo2 />} Back to latest
                     </Button>
                   ) : (
-                    <Button size="xs" variant="outline" disabled={Boolean(why) || doing !== null} title={tip(why || `Look at ${version.tag} in the app pane; the data is put back as it is now when you go back`)} onClick={() => void act('preview:' + version.tag, () => previewVersion(version.tag))}>
+                    <Button size="xs" variant="ghost" className="text-muted-foreground" disabled={busy} title={tip(why || `Look at ${version.tag} in the app pane; the data is put back as it is now when you go back`)} onClick={() => void act('preview:' + version.tag, () => previewVersion(version.tag))}>
                       {doing === 'preview:' + version.tag ? <LoaderCircle className="animate-spin" /> : <Eye />} Preview
                     </Button>
-                  )}
-                  <Button size="xs" variant="ghost" disabled={Boolean(why) || doing !== null} title={tip(why || `Make ${version.tag}'s code the next version, ${next}`)} onClick={() => void restore(version)}>
+                  ))}
+                {!isLatest && (
+                  <Button size="xs" variant="ghost" className="text-muted-foreground" disabled={busy} title={tip(why || `Make ${version.tag}'s code the next version, ${next}`)} onClick={() => void restore(version)}>
                     {doing === 'restore:' + version.tag ? <LoaderCircle className="animate-spin" /> : <ArchiveRestore />} Restore
                   </Button>
-                </div>
-              )}
+                )}
+                {version.sessions.map((sessionId, i) => (
+                  <Button key={sessionId} size="xs" variant="ghost" className="text-muted-foreground" title={tip('Read the conversation with Claude that built this version')} onClick={() => setReading({ version, sessionId })}>
+                    <MessageSquareText /> How it was built{version.sessions.length > 1 ? ` (${i + 1})` : ''}
+                  </Button>
+                ))}
+                {isLatest && version.sessions.length === 0 && <span className="px-1.5 text-xs text-muted-foreground">What the app runs now</span>}
+              </div>
             </li>
           )
         })}
