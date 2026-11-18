@@ -443,7 +443,7 @@ type ChatProps = {
    */
   outbox?: { id: number; text: string } | null
   /** The plan published in this conversation, not yet built: the chat shows its [Build this] above the message box while in Plan. */
-  plan?: { name: string; title: string; url: string; page: string | null; sessionId: string | null } | null
+  plan?: { name: string; title: string; url: string; page: string | null; sessionId: string | null; at: string } | null
   /** Sends Claude the plan once [Build this] has started its feature and switched to Build. */
   onBuildPlan?: (message: string) => void
 }
@@ -998,7 +998,8 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
             </div>
           )}
           {w && <ModeSwitch mode={w.mode} />}
-          {plan && onBuildPlan && w?.mode === 'plan' && agent && plan.sessionId === agent.sessionId && (
+          {/* Not once it's been built: a checkpoint saved after the plan was published means Build this was used, or the work done another way. */}
+          {plan && onBuildPlan && w?.mode === 'plan' && agent && plan.sessionId === agent.sessionId && !w.feature?.checkpoints.some((checkpoint) => checkpoint.at > plan.at) && (
             <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5">
               <span className="min-w-0 flex-1 truncate text-xs">
                 The plan is ready: <span className="font-medium">{plan.title}</span>

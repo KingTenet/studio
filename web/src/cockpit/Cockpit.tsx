@@ -126,7 +126,7 @@ const Layout = ({ selected, setSelected, adopt, focusMessage }: LayoutProps) => 
   // What a plan's [Build this] has the chat send Claude: to the chat's Claude, shown in the chat first if another session was.
   const [outbox, setOutbox] = useState<{ id: number; text: string } | null>(null)
   // The plan published in this conversation, for the chat's [Build this] (it shows only while the chat is in Plan, in that session).
-  const [plan, setPlan] = useState<{ name: string; title: string; url: string; page: string | null; sessionId: string | null } | null>(null)
+  const [plan, setPlan] = useState<{ name: string; title: string; url: string; page: string | null; sessionId: string | null; at: string } | null>(null)
   const sendForHer = (text: string) => {
     if (chat) setSelected(chat.paneId)
     setOutbox((current) => ({ id: (current?.id ?? 0) + 1, text }))
@@ -217,7 +217,7 @@ const Layout = ({ selected, setSelected, adopt, focusMessage }: LayoutProps) => 
               />
             </div>
             <div className={source === 'artifacts' ? 'h-full' : 'hidden'}>
-              <ArtifactsPane label={LABEL} switcher={switcher} previewId={previewId} onPreview={(id) => (id ? previewArtifact(id) : setPreviewId(null))} onPublished={onPublished} onPlan={(artifact) => setPlan(artifact?.plan ? { name: artifact.plan, title: artifact.name, url: artifact.url, page: artifact.page ?? null, sessionId: artifact.latest.sessionId ?? null } : null)} onBuildPlan={sendForHer} onShowing={onShowing} onPick={onPick} onEscape={clearPicks} drawingRef={artifactDrawing} drawingAttached={artifactInk.attached} onDrawingChange={artifactInk.onChange} />
+              <ArtifactsPane label={LABEL} switcher={switcher} previewId={previewId} onPreview={(id) => (id ? previewArtifact(id) : setPreviewId(null))} onPublished={onPublished} onPlan={(artifact) => setPlan(artifact?.plan ? { name: artifact.plan, title: artifact.name, url: artifact.url, page: artifact.page ?? null, sessionId: artifact.latest.sessionId ?? null, at: artifact.latest.ts } : null)} onBuildPlan={sendForHer} onShowing={onShowing} onPick={onPick} onEscape={clearPicks} drawingRef={artifactDrawing} drawingAttached={artifactInk.attached} onDrawingChange={artifactInk.onChange} />
             </div>
             <div className={source === 'draw' ? 'h-full' : 'hidden'}>
               <DrawPane ref={drawing} active={source === 'draw'} switcher={switcher} attached={ink.attached} onChange={ink.onChange} />
