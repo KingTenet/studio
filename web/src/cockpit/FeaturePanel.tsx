@@ -291,8 +291,9 @@ const KeepOrDiscard = ({ w, feature }: { w: App; feature: Feature }) => {
       <div className="flex flex-wrap items-center gap-1.5">
         <Button
           size="sm"
-          disabled={disabled}
-          title={tip(why || `Check the app, then keep "${feature.name}" as the next version`)}
+          // Nothing to keep before the first checkpoint (Discard still throws an empty feature away).
+          disabled={disabled || feature.checkpoints.length === 0}
+          title={tip(why || (feature.checkpoints.length === 0 ? 'Nothing to keep yet: ask Claude for a change first' : `Check the app, then keep "${feature.name}" as the next version`))}
           onClick={() => {
             setMessage('')
             setKeepOpen(true)
