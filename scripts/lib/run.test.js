@@ -81,7 +81,7 @@ const setup = async (t) => {
     }
     fs.rmSync(root, { recursive: true, force: true });
   });
-  return { app, live, port, git, version, run, fetchApp, pid, npmCalls };
+  return { app, live, port, env, git, version, run, fetchApp, pid, npmCalls };
 };
 
 test('studio run: the newest version from its own copy and data, upgraded forward with a backup, the app itself untouched', async (t) => {
@@ -138,6 +138,36 @@ test('studio run: the newest version from its own copy and data, upgraded forwar
   // The workshop's checkout is untouched: still main, nothing changed.
   assert.equal(s.git('symbolic-ref', '--short', 'HEAD'), 'main');
   assert.equal(s.git('status', '--porcelain'), '');
+});
+
+test('studio run --if-running moves only a running app forward; studio stop stops it', async (t) => {
+  const s = await setup(t);
+  s.version('v1');
+  // Not running: nothing is started.
+  let result = s.run('my-app', '--if-running');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /isn't running for real, so there's nothing to update/);
+  assert.deepEqual(s.npmCalls(), []);
+
+  result = s.run('my-app');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(await s.fetchApp(), /^v1\|/);
+
+  // A version kept while it runs: --if-running moves it there, data backed up.
+  s.version('v2');
+  result = s.run('my-app', '--if-running');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /moved from v1 to v2/);
+  assert.match(await s.fetchApp(), /^v2\|started v1\nstarted v2\n$/);
+
+  // studio stop: stopped, and its port free.
+  const pid = Number(s.pid());
+  result = spawnSync(STUDIO, ['stop', 'my-app'], { encoding: 'utf8', env: s.env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /my-app has stopped/);
+  assert.throws(() => process.kill(pid, 0), 'the server is gone');
+  await assert.rejects(s.fetchApp());
+  assert.match(spawnSync(STUDIO, ['stop', 'my-app'], { encoding: 'utf8', env: s.env }).stdout, /isn't running/);
 });
 
 test('studio run says when something else holds its port, and starts nothing', async (t) => {

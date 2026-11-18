@@ -273,7 +273,8 @@ dd { margin: 0; min-width: 0; }
     <ul class="plain">
       <li>Open your app from <b>Applications</b> (it has your app's name), or drag it into the Dock. It opens in the browser at <b>localhost:5001</b>.</li>
       <li>It runs the newest version you kept, with its own data. Nothing you do in Studio touches that data.</li>
-      <li>After you keep a new version, the next time you open the app it updates itself, and saves a backup copy of your data first.</li>
+      <li>When you keep a new version, an app that's open updates itself straight away (reload its page to see it), saving a backup copy of your data first. One that isn't open updates the next time you open it.</li>
+      <li>To stop it, type <code>studio stop</code> in Terminal.</li>
     </ul>
     <p class="note">You don't need Studio running to use your app. Studio is only for changing it.</p>
   </section>

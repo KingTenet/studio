@@ -11,7 +11,7 @@ const path = require('node:path');
 // The server keeps its logs under STUDIO_HOME, read once at load: point it at a throwaway folder before loading it.
 process.env.STUDIO_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-server-test-'));
 
-const { withPaneLock, typeEffort, typeInto, clearInput, serveVadFile, appAgents, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats } = require('./studio-server');
+const { updateRealApp, withPaneLock, typeEffort, typeInto, clearInput, serveVadFile, appAgents, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats } = require('./studio-server');
 
 test('isLocalHost: localhost and 127.0.0.1 only, so a rebound DNS name is refused', () => {
   assert.ok(isLocalHost('localhost'));
@@ -84,6 +84,13 @@ test('answerFreeText: arrows to the free-text option, clears it, types, and pres
   const gone = laggyQuestion('1', '');
   assert.match(await answerFreeText('2', 'x', gone.read, gone.keys, gone.type, 2000), /no such text option/);
   assert.match(await answerFreeText('4', 'x', () => 'no question here', gone.keys, gone.type, 2000), /no such text option/);
+});
+
+test('updateRealApp: moves the app running for real to the new version, in the background and without opening a browser', () => {
+  const started = [];
+  updateRealApp('/Users/her/Studio/writing-hub', (args, env) => started.push({ args, open: env.STUDIO_NO_OPEN }));
+  assert.deepEqual(started, [{ args: ['run', '/Users/her/Studio/writing-hub', '--if-running'], open: '1' }]);
+  assert.doesNotThrow(() => updateRealApp('/x', () => { throw new Error('no studio command'); }), 'a Keep never fails over it');
 });
 
 test('withPaneLock: what is typed into one pane runs one at a time, in order, even when one fails; other panes go on meanwhile', async () => {

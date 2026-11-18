@@ -1473,8 +1473,21 @@ const keepFeatureNow = async (req, res) => {
     return;
   }
   pushInBackground(appDir, ['main']);
+  updateRealApp(appDir);
   await clearChat(chat);
   sendJson(res, 200, kept);
+};
+
+/**
+ * After Keep or Restore made a new version: the app running for real (`studio run`) moves to it, if it's running: its data is
+ * backed up first, then the new version starts (`studio run <app> --if-running`, in the background, no browser opened).
+ */
+const updateRealApp = (appDir, start = (args, env) => spawn(path.join(SCRIPTS, '..', 'bin', 'studio'), args, { detached: true, stdio: 'ignore', env }).unref()) => {
+  try {
+    start(['run', appDir, '--if-running'], { ...process.env, STUDIO_NO_OPEN: '1' });
+  } catch (error) {
+    console.error(`couldn't update the app running for real: ${error.message}`);
+  }
 };
 
 /** Discards the feature: develop back to main, data/ back to how it was at the feature's start; develop is pushed and the chat cleared. */
@@ -1567,6 +1580,7 @@ const restoreVersionNow = async (req, res) => {
     return;
   }
   pushInBackground(appDir, ['main']);
+  updateRealApp(appDir);
   sendJson(res, 200, restored);
 };
 
@@ -1874,4 +1888,4 @@ if (require.main === module) {
   }, PUSH_RETRY_MS);
 }
 
-module.exports = { serveVadFile, appAgents, appInfo, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, shellQuote, streamJob, suspectTranscript, clearInput, takeRestoredInput, typeInto, typeEffort, withPaneLock, tabState, updateListener, wavStats };
+module.exports = { serveVadFile, appAgents, appInfo, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, shellQuote, streamJob, suspectTranscript, clearInput, takeRestoredInput, typeInto, typeEffort, updateRealApp, withPaneLock, tabState, updateListener, wavStats };

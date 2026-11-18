@@ -50,6 +50,8 @@ When something breaks, the cockpit says so: a crashed server or a page that thro
 
 `studio down` stops it all by closing that workspace (not while Claude is working or waiting for an answer), and `studio restart` does that and then `studio up`: every tab starts afresh on the newest version, and Claude continues its conversation. `studio up` on its own restarts only the cockpit's server after an update.
 
+`studio run [<app>]` runs the app for real, apart from the studio: its newest kept version, from a worktree in `~/Studio/.live/<app>/code`, on its own data that nothing in the studio rewinds, at http://localhost:5001. Moving to a newer version backs the database up first. Keep and Restore move a running one to the new version straight away (`studio run <app> --if-running`); one that isn't running moves when it's next opened. `studio stop [<app>]` stops it. `studio down` leaves it running.
+
 ## Layout
 
 - `bin/studio`: the `studio up` command.

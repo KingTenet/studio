@@ -39,6 +39,7 @@
 #        studio new <app> [--collaborator <github user>]
 #        studio switch <app>
 #        studio run [<app>]
+#        studio stop [<app>]      # stops the app running for real (studio run)
 #        studio logs              # puts the studio's logs in one zip on the Desktop, to send to whoever helps
 #        studio restart           # studio down (when it's running), then studio up: the newest version, started afresh
 #        studio down              # stops the studio (Claude, the cockpit, the app's dev server, dictation): `studio up`
@@ -76,14 +77,15 @@ WHISPER_MODEL="${STUDIO_WHISPER_MODEL:-$HOME/.whisper/ggml-small.en.bin}"
 WORKSPACE="${STUDIO_WORKSPACE:-studio}"
 CONFIG="$STUDIO_HOME/config.json"
 
-usage() { echo "usage: studio up [--dry-run]   or   studio new <app> [--collaborator <github user>]   or   studio switch <app>   or   studio run [<app>]   or   studio logs   or   studio down   or   studio restart" >&2; exit 2; }
+usage() { echo "usage: studio up [--dry-run]   or   studio new <app> [--collaborator <github user>]   or   studio switch <app>   or   studio run [<app>]   or   studio stop [<app>]   or   studio logs   or   studio down   or   studio restart" >&2; exit 2; }
 DRY_RUN=false
 case "${1:-} ${2:-}" in
   "up ") ;;
   "up --dry-run") DRY_RUN=true ;;
   new\ ?*) ;;
   switch\ ?*) [ $# -eq 2 ] || usage ;;
-  run\ *) [ $# -le 2 ] || usage ;;
+  run\ *) [ $# -le 3 ] || usage ;;
+  stop\ *) [ $# -le 2 ] || usage ;;
   "logs ") ;;
   "down ") ;;
   "restart ") ;;
@@ -356,13 +358,50 @@ fi
 
 # --- studio run -----------------------------------------------------------------------------------
 
-if [ "$1" = run ]; then
-  if [ -n "${2:-}" ]; then
-    app="$(app_folder "$2")" || exit 1
+# The app named on the command line, else the one the studio works on.
+named_app() {
+  if [ -n "${1:-}" ]; then
+    app_folder "$1"
   else
-    app="$(config .appDir)"
-    app="$(app_folder "${app:-$HOME/Studio/my-app}")" || exit 1
+    local configured
+    configured="$(config .appDir)"
+    app_folder "${configured:-$HOME/Studio/my-app}"
   fi
+}
+
+# --- studio stop: the app running for real -------------------------------------------------------
+
+if [ "$1" = stop ]; then
+  app="$(named_app "${2:-}")" || exit 1
+  name="$(basename "$app")"
+  pidfile="$HOME/Studio/.live/$name/app.pid"
+  if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+    kill "$(cat "$pidfile")" 2>/dev/null || true
+    for _ in $(seq 1 40); do
+      kill -0 "$(cat "$pidfile")" 2>/dev/null || break
+      sleep 0.25
+    done
+    rm -f "$pidfile"
+    echo "$name has stopped. Open it again from Applications, or with: studio run $name"
+  else
+    rm -f "$pidfile"
+    echo "$name isn't running."
+  fi
+  exit 0
+fi
+
+if [ "$1" = run ]; then
+  # --if-running: only move a running app to the newest version (the studio does this after Keep or Restore).
+  if_running=false
+  app_arg=""
+  for arg in ${2+"${@:2}"}; do
+    case "$arg" in
+      --if-running) if_running=true ;;
+      -*) usage ;;
+      *) [ -z "$app_arg" ] || usage; app_arg=$arg ;;
+    esac
+  done
+  app="$(named_app "$app_arg")" || exit 1
   name="$(basename "$app")"
   LIVE="$HOME/Studio/.live/$name"
   CODE="$LIVE/code"
@@ -373,6 +412,10 @@ if [ "$1" = run ]; then
 
   running() { [ -f "$LIVE/app.pid" ] && kill -0 "$(cat "$LIVE/app.pid")" 2>/dev/null; }
   listener() { lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | head -n1; }
+  if [ "$if_running" = true ] && ! running; then
+    echo "$name isn't running for real, so there's nothing to update. It'll open on $tag next time."
+    exit 0
+  fi
   stop() {
     running || return 0
     kill "$(cat "$LIVE/app.pid")" 2>/dev/null || true
