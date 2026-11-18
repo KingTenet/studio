@@ -42,6 +42,7 @@
 #                                         # its git repo) into ~/Studio/<name>, then switches to it; nothing is pushed back
 #        studio run [<app>]
 #        studio stop [<app>]      # stops the app running for real (studio run)
+#        studio status            # which services are running, which app the studio works on, which apps run for real
 #        studio logs              # puts the studio's logs in one zip on the Desktop, to send to whoever helps
 #        studio restart           # studio down (when it's running), then studio up: the newest version, started afresh
 #        studio down              # stops the studio (Claude, the cockpit, the app's dev server, dictation): `studio up`
@@ -79,7 +80,7 @@ WHISPER_MODEL="${STUDIO_WHISPER_MODEL:-$HOME/.whisper/ggml-small.en.bin}"
 WORKSPACE="${STUDIO_WORKSPACE:-studio}"
 CONFIG="$STUDIO_HOME/config.json"
 
-usage() { echo "usage: studio up [--dry-run]   or   studio new <app> [--collaborator <github user>]   or   studio switch <app>   or   studio clone <source> [<name>]   or   studio run [<app>]   or   studio stop [<app>]   or   studio logs   or   studio down   or   studio restart" >&2; exit 2; }
+usage() { echo "usage: studio up [--dry-run]   or   studio new <app> [--collaborator <github user>]   or   studio switch <app>   or   studio clone <source> [<name>]   or   studio run [<app>]   or   studio stop [<app>]   or   studio status   or   studio logs   or   studio down   or   studio restart" >&2; exit 2; }
 DRY_RUN=false
 case "${1:-} ${2:-}" in
   "up ") ;;
@@ -90,6 +91,7 @@ case "${1:-} ${2:-}" in
   run\ *) [ $# -le 3 ] || usage ;;
   stop\ *) [ $# -le 2 ] || usage ;;
   "logs ") ;;
+  "status ") ;;
   "down ") ;;
   "restart ") ;;
   *) usage ;;
@@ -251,6 +253,89 @@ if [ "$1" = down ]; then
   if [ -n "${STUDIO_RESTARTING:-}" ]; then echo "The studio has stopped; starting it again…"
   else echo "The studio has stopped. To start it again (on the newest version): studio up"
   fi
+  exit 0
+fi
+
+# --- studio status --------------------------------------------------------------------------------
+
+if [ "$1" = status ]; then
+  in_use() { nc -z 127.0.0.1 "$1" 2>/dev/null; }
+  # The studio itself, and whether there's a newer version (as of the last fetch).
+  ahead=$(git -C "$STUDIO_DIR" rev-list --count HEAD..@{upstream} 2>/dev/null || echo "")
+  echo "Studio $(git -C "$STUDIO_DIR" log -1 --format='%h, %cd' --date=format:'%d %b %H:%M') in $STUDIO_DIR${ahead:+$([ "$ahead" -gt 0 ] && echo " ($ahead newer on GitHub: studio restart gets them)")}"
+  echo
+
+  configured="$(config .appDir)"
+  APP_PORT="$(config .appPort)"
+  if [ -n "$configured" ] && [ -d "$configured/.git" ]; then
+    name=$(basename "$configured")
+    state="$STUDIO_HOME/features/$(printf %s "$configured" | sed 's/[^A-Za-z0-9]/-/g')"
+    feature=$(jq -r '"“\(.name)”, \(.checkpoints | length) checkpoint\(if (.checkpoints | length) == 1 then "" else "s" end)"' "$state/feature.json" 2>/dev/null || true)
+    mode=$(jq -r '.mode // empty' "$state/mode.json" 2>/dev/null || true)
+    latest=$(git -C "$configured" tag --list 'v*' --sort=-v:refname | head -n1)
+    echo "The studio works on $name ($configured)"
+    echo "  latest version ${latest:-none}; feature: ${feature:-none open}${mode:+; chat in $(printf %s "$mode" | awk '{ print toupper(substr($0, 1, 1)) substr($0, 2) }')}"
+  else
+    echo "The studio works on no app yet. Make one with: studio new <name>"
+  fi
+  echo
+
+  # The herdr workspace's tabs: running, or left at their shell prompt.
+  ws=""
+  herdr workspace list >/dev/null 2>&1 &&
+    ws=$(herdr workspace list | jq -r --arg label "$WORKSPACE" '.result.workspaces[] | select(.label == $label) | .workspace_id' | head -n1)
+  if [ -z "$ws" ]; then
+    echo "Services: not running. Start them with: studio up"
+  else
+    echo "Services (herdr workspace \"$WORKSPACE\"):"
+    tabs=$(herdr tab list --workspace "$ws" 2>/dev/null || echo '{}')
+    panes=$(herdr pane list --workspace "$ws" 2>/dev/null || echo '{}')
+    for tab in claude studio app whisper reaper; do
+      tab_id=$(echo "$tabs" | jq -r --arg label "$tab" '.result.tabs[]? | select(.label == $label) | .tab_id' | head -n1)
+      case "$tab" in
+        studio) port=$STUDIO_PORT ;;
+        app) port=${APP_PORT:-4001} ;;
+        whisper) port=$STUDIO_WHISPER_PORT ;;
+        *) port="" ;;
+      esac
+      if [ -z "$tab_id" ]; then
+        line="not there (studio up starts it)"
+      else
+        pane=$(echo "$panes" | jq -c --arg tab "$tab_id" '[.result.panes[]? | select(.tab_id == $tab)][0] // {}')
+        idle=$(herdr pane process-info --pane "$(echo "$pane" | jq -r '.pane_id // empty')" 2>/dev/null | jq -r '.result.process_info | .foreground_process_group_id == .shell_pid' 2>/dev/null || echo unknown)
+        if [ "$idle" = true ]; then
+          line="stopped (its tab is at a prompt; studio restart starts it)"
+        elif [ "$tab" = claude ]; then
+          line="running, $(echo "$pane" | jq -r '.agent_status // "unknown"' | sed 's/^done$/idle/;s/^blocked$/waiting for an answer/')"
+        else
+          line="running"
+        fi
+      fi
+      if [ -n "$port" ]; then
+        if in_use "$port"; then line="$line, http://localhost:$port"; else line="$line, nothing on port $port"; fi
+      fi
+      printf '  %-8s %s\n' "$tab" "$line"
+    done
+  fi
+  echo
+
+  # Each app in ~/Studio, and whether it runs for real (studio run).
+  echo "Apps in ~/Studio:"
+  found=false
+  for dir in "$HOME"/Studio/*/; do
+    [ -d "$dir.git" ] || continue
+    found=true
+    name=$(basename "$dir")
+    live="$HOME/Studio/.live/$name"
+    real="not running for real"
+    if [ -f "$live/app.pid" ] && kill -0 "$(cat "$live/app.pid")" 2>/dev/null; then
+      real="running for real: $(git -C "$live/code" describe --tags --exact-match --match 'v*' 2>/dev/null || echo '?') at http://localhost:${STUDIO_LIVE_PORT:-5001} (studio stop $name stops it)"
+    fi
+    marker="  "
+    [ -n "$configured" ] && [ "$(cd "$dir" && pwd -P)" = "$(cd "$configured" 2>/dev/null && pwd -P)" ] && marker="▸ "
+    printf '%s%-20s %s\n' "$marker" "$name" "$real"
+  done
+  [ "$found" = true ] || echo "  none yet"
   exit 0
 fi
 

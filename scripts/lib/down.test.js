@@ -38,6 +38,7 @@ esac
   const env = { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`, STUDIO_HOME: path.join(home, '.studio'), STUDIO_PORT: '45991', STUDIO_WHISPER_PORT: '45992', STUDIO_WORKSPACE: 'studio' };
   delete env.STUDIO_LOGGING;
   return {
+    env,
     run: (command = 'down') => spawnSync(STUDIO, [command], { encoding: 'utf8', env }),
     calls: () => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8') : ''),
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
@@ -91,5 +92,27 @@ test('studio restart stops nothing while Claude is working, and starts nothing e
     assert.doesNotMatch(t.calls(), /workspace close|workspace create|tab create/);
   } finally {
     t.cleanup();
+  }
+});
+
+test('studio status: the services in the studio workspace, the app it works on, and the apps in ~/Studio', () => {
+  const t = setup();
+  try {
+    const result = spawnSync(STUDIO, ['status'], { encoding: 'utf8', env: t.env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^Studio \w+, /m);
+    assert.match(result.stdout, /Services \(herdr workspace "studio"\):/);
+    assert.match(result.stdout, /^ {2}claude {3}running, idle$/m);
+    assert.match(result.stdout, /^ {2}studio {3}running, nothing on port 45991$/m);
+    assert.match(result.stdout, /^ {2}app {6}not there \(studio up starts it\)/m);
+    assert.match(result.stdout, /Apps in ~\/Studio:\n {2}none yet/);
+  } finally {
+    t.cleanup();
+  }
+  const off = setup({ running: false });
+  try {
+    assert.match(spawnSync(STUDIO, ['status'], { encoding: 'utf8', env: off.env }).stdout, /Services: not running\. Start them with: studio up/);
+  } finally {
+    off.cleanup();
   }
 });
