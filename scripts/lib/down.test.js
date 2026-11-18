@@ -116,3 +116,22 @@ test('studio status: the services in the studio workspace, the app it works on, 
     off.cleanup();
   }
 });
+
+test('studio on its own, or help, shows the help page; a wrong command or wrong arguments say what to do instead', () => {
+  const t = setup();
+  try {
+    for (const args of [[], ['help'], ['--help'], ['-h']]) {
+      const result = spawnSync(STUDIO, args, { encoding: 'utf8', env: t.env });
+      assert.equal(result.status, 0, args.join(' '));
+      assert.match(result.stdout, /^Studio: build your app with Claude/);
+      assert.match(result.stdout, /^ {2}studio restart {13}Start it afresh/m);
+      assert.doesNotMatch(result.stdout, /\x1b\[/, 'no bold codes when not in a terminal');
+    }
+    const bogus = spawnSync(STUDIO, ['bogus'], { encoding: 'utf8', env: t.env });
+    assert.equal(bogus.status, 2);
+    assert.equal(bogus.stderr.trim(), 'studio doesn\'t know "bogus". Type studio help for what it can do.');
+    assert.equal(spawnSync(STUDIO, ['switch'], { encoding: 'utf8', env: t.env }).stderr.trim(), "That's not how studio switch goes. It takes: studio switch <name>");
+  } finally {
+    t.cleanup();
+  }
+});

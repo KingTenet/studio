@@ -80,21 +80,70 @@ WHISPER_MODEL="${STUDIO_WHISPER_MODEL:-$HOME/.whisper/ggml-small.en.bin}"
 WORKSPACE="${STUDIO_WORKSPACE:-studio}"
 CONFIG="$STUDIO_HOME/config.json"
 
-usage() { echo "usage: studio up [--dry-run]   or   studio new <app> [--collaborator <github user>]   or   studio switch <app>   or   studio clone <source> [<name>]   or   studio run [<app>]   or   studio stop [<app>]   or   studio status   or   studio logs   or   studio down   or   studio restart" >&2; exit 2; }
+# The help page: `studio`, `studio help`, --help or -h. Headings in bold in a terminal.
+help() {
+  local b="" r=""
+  if [ -t 1 ]; then b=$'\033[1m'; r=$'\033[0m'; fi
+  cat <<HELP
+${b}Studio${r}: build your app with Claude, one feature at a time.
+
+${b}Every day${r}
+  studio up                  Start the studio and open it in your browser
+  studio restart             Start it afresh on the newest version (after an update, or when something seems stuck)
+  studio down                Stop the studio
+  studio status              What's running, and which app the studio works on
+
+${b}Your apps${r}
+  studio new <name>          Make a new app and switch to it
+                             --collaborator <GitHub user>: invite someone to its private repo, to help you
+  studio switch <name>       Work on another of your apps
+  studio clone <source> [<name>]
+                             Copy someone else's Studio app (a GitHub URL, owner/repo, or a folder) and switch to it;
+                             nothing is pushed back to them
+  studio run [<name>]        Open your app for real, on its own data, at http://localhost:${STUDIO_LIVE_PORT:-5001}
+  studio stop [<name>]       Stop the app you opened with studio run
+
+${b}When something's wrong${r}
+  studio logs                Save the studio's logs to your Desktop, to send to whoever is helping you
+  studio help                This list
+
+<name> is an app's folder in ~/Studio: lowercase letters, numbers and dashes, like my-app.
+HELP
+}
+# A command it knows given the wrong things: what it takes. Anything else: where to look.
+usage() {
+  local takes=""
+  case "${1:-}" in
+    up) takes="studio up [--dry-run]" ;;
+    new) takes="studio new <name> [--collaborator <GitHub user>]" ;;
+    switch) takes="studio switch <name>" ;;
+    clone) takes="studio clone <source> [<name>]" ;;
+    run) takes="studio run [<name>]" ;;
+    stop) takes="studio stop [<name>]" ;;
+    status | logs | down | restart | help) takes="studio $1" ;;
+  esac
+  if [ -n "$takes" ]; then echo "That's not how studio $1 goes. It takes: $takes" >&2
+  else echo "studio doesn't know \"${1:-}\". Type studio help for what it can do." >&2
+  fi
+  exit 2
+}
 DRY_RUN=false
+case "${1:-}" in
+  "" | help | --help | -h) help; exit 0 ;;
+esac
 case "${1:-} ${2:-}" in
   "up ") ;;
   "up --dry-run") DRY_RUN=true ;;
   new\ ?*) ;;
-  switch\ ?*) [ $# -eq 2 ] || usage ;;
-  clone\ ?*) [ $# -le 3 ] || usage ;;
-  run\ *) [ $# -le 3 ] || usage ;;
-  stop\ *) [ $# -le 2 ] || usage ;;
+  switch\ ?*) [ $# -eq 2 ] || usage "$1" ;;
+  clone\ ?*) [ $# -le 3 ] || usage "$1" ;;
+  run\ *) [ $# -le 3 ] || usage "$1" ;;
+  stop\ *) [ $# -le 2 ] || usage "$1" ;;
   "logs ") ;;
   "status ") ;;
   "down ") ;;
   "restart ") ;;
-  *) usage ;;
+  *) usage "${1:-}" ;;
 esac
 
 LOGS="$STUDIO_HOME/logs"
@@ -136,9 +185,9 @@ if [ "$1" = new ]; then
   name="" collaborator=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --collaborator) [ $# -ge 2 ] || usage; collaborator=$2; shift 2 ;;
-      -*) usage ;;
-      *) [ -z "$name" ] || usage; name=$1; shift ;;
+      --collaborator) [ $# -ge 2 ] || usage new; collaborator=$2; shift 2 ;;
+      -*) usage new ;;
+      *) [ -z "$name" ] || usage new; name=$1; shift ;;
     esac
   done
   case "$name" in
@@ -532,8 +581,8 @@ if [ "$1" = run ]; then
   for arg in ${2+"${@:2}"}; do
     case "$arg" in
       --if-running) if_running=true ;;
-      -*) usage ;;
-      *) [ -z "$app_arg" ] || usage; app_arg=$arg ;;
+      -*) usage run ;;
+      *) [ -z "$app_arg" ] || usage run; app_arg=$arg ;;
     esac
   done
   app="$(named_app "$app_arg")" || exit 1
