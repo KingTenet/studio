@@ -713,7 +713,13 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
     session.messages.length > pending.count || session.messages.some((message) => message.kind === 'you' && message.text.includes(pending.text.slice(0, 200)))
   const unsent = sending && agent?.paneId === sending.paneId && !arrived(sending) ? sending.text : null
 
-  const pending = stuckInput ? `Typed in herdr, not sent: “${stuckInput}”. Send or clear it there first.` : ''
+  const pending = stuckInput ? `Something typed in Claude's window wasn't sent: “${stuckInput}”. Clear it to send yours.` : ''
+  const clearStuck = async () => {
+    if (!agent) return
+    const error = await sendToSession({ paneId: agent.paneId, label, clear: true })
+    if (error) setNotice({ text: error, error: true })
+    void poll()
+  }
   const shown =
     notice?.text || pending || (blocked ? 'Answer the prompt above first, or Esc to cancel it.' : working ? 'Claude is working: a message sent now waits in its queue and reaches it at its next step. Esc interrupts it instead.' : '')
   const name = placeholder ? 'Claude' : agent ? (agent.title ?? sessionName(w, agent)) : (stopped?.title ?? 'claude')
@@ -1005,6 +1011,11 @@ export const Chat = ({ label, w, selected, onSelect, collapsed, pinned = true, o
           />
           <div className="flex items-center gap-2">
             <span className={cn('min-w-0 flex-1 text-xs break-words', notice?.error || pending ? 'text-destructive' : 'text-muted-foreground')}>{shown}</span>
+            {pending && shown === pending && (
+              <Button size="sm" variant="outline" onClick={() => void clearStuck()}>
+                Clear it
+              </Button>
+            )}
             {stickyFocus && (
               <Button
                 size="icon-sm"

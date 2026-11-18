@@ -27,10 +27,12 @@ fi
 LOOKS="$STUDIO_HOME/looks"
 mkdir -p "$LOOKS"
 SHOT="$LOOKS/$(date +%Y-%m-%dT%H-%M-%S)-$(printf %s "$PAGE" | tr -c 'A-Za-z0-9' '-' | cut -c1-40).png"
-# Its own profile, so it never touches the Chrome you have open.
+# Its own profile, so it never touches the Chrome you have open. No background updates either: macOS blames them on Terminal
+# ("Terminal was prevented from modifying apps"), since this Chrome runs under it.
 PROFILE=$(mktemp -d)
 trap 'rm -rf "$PROFILE"' EXIT
 "$CHROME" --headless=new --disable-gpu --hide-scrollbars --user-data-dir="$PROFILE" --window-size=1280,800 \
+  --disable-background-networking --disable-component-update \
   --virtual-time-budget=5000 --screenshot="$SHOT" "$URL" >/dev/null 2>&1 || true
 if [ ! -s "$SHOT" ]; then
   echo "Chrome didn't manage to take a screenshot of $URL." >&2

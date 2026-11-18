@@ -114,7 +114,7 @@ export const getSession = async (params: URLSearchParams): Promise<SessionView |
  * Types into a session: `{ key }` presses one key, `{ text }` sends a message (with `context`, what the page shows, for that prompt only).
  * `label` names the worktree where the page's host doesn't (the index). Resolves to the server's error, if any.
  */
-export const sendToSession = async (body: { paneId: string; label?: string; key?: string; text?: string; answer?: { key: string; text: string }; context?: string }): Promise<string | null> => {
+export const sendToSession = async (body: { paneId: string; label?: string; key?: string; text?: string; answer?: { key: string; text: string }; context?: string; clear?: boolean }): Promise<string | null> => {
   const res = await post('/session/send', body)
   if (res.ok) return null
   const json = (await res.json().catch(() => ({}))) as { error?: string }

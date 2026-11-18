@@ -11,7 +11,7 @@ const path = require('node:path');
 // The server keeps its logs under STUDIO_HOME, read once at load: point it at a throwaway folder before loading it.
 process.env.STUDIO_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-server-test-'));
 
-const { serveVadFile, appAgents, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats } = require('./studio-server');
+const { clearInput, serveVadFile, appAgents, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats } = require('./studio-server');
 
 test('isLocalHost: localhost and 127.0.0.1 only, so a rebound DNS name is refused', () => {
   assert.ok(isLocalHost('localhost'));
@@ -84,6 +84,14 @@ test('answerFreeText: arrows to the free-text option, clears it, types, and pres
   const gone = laggyQuestion('1', '');
   assert.match(await answerFreeText('2', 'x', gone.read, gone.keys, gone.type, 2000), /no such text option/);
   assert.match(await answerFreeText('4', 'x', () => 'no question here', gone.keys, gone.type, 2000), /no such text option/);
+});
+
+test('clearInput: backspaces out text left in the input box, with spares, and says what it was; nothing to clear, no keys', () => {
+  const sent = [];
+  assert.equal(clearInput(() => 'd', (...keys) => sent.push(...keys)), 'd');
+  assert.deepEqual(sent, Array(21).fill('backspace'));
+  assert.equal(clearInput(() => '', (...keys) => sent.push(...keys)), '');
+  assert.equal(sent.length, 21);
 });
 
 test('takeRestoredInput: clears the message an interrupt put back and returns it; empty when none shows', async () => {
@@ -367,6 +375,7 @@ test('keepDrawing: a PNG per drawing under its worktree, the newest 50 kept; not
 test('artifactShotArgs: headless Chrome at the pane size and scale, scrolled by the page itself, dark when asked; anything out of range is refused', () => {
   const args = artifactShotArgs({ id: 'abc_D-1', v: '3', y: '420', w: '800', h: '600', scale: '2', dark: '1' }, '/tmp/x/shot.png', '/tmp/x/profile');
   assert.ok(args.includes('--headless'));
+  assert.ok(args.includes('--disable-background-networking') && args.includes('--disable-component-update'), 'no background updates');
   assert.ok(args.includes('--window-size=800,600'));
   assert.ok(args.includes('--force-device-scale-factor=2'));
   assert.ok(args.includes('--force-dark-mode'));

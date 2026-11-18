@@ -550,6 +550,8 @@ const artifactShotArgs = ({ id, v, y, w, h, scale, dark }, out, profile) => {
   if (!/^[A-Za-z0-9_-]+$/.test(id ?? '') || version === null || top === null || !width || !height || !(dpr >= 1 && dpr <= 4)) return null;
   return [
     '--headless', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check', '--user-data-dir=' + profile,
+    // No background updates: macOS blames them on Terminal, which this Chrome runs under ("Terminal was prevented from modifying apps").
+    '--disable-background-networking', '--disable-component-update',
     `--window-size=${width},${height}`, `--force-device-scale-factor=${dpr}`, '--virtual-time-budget=3000',
     ...(dark === '1' ? ['--force-dark-mode'] : []), '--screenshot=' + out,
     `http://localhost:${CONTROL_PORT}/_env/artifact/${id}/v${version}/#studio-y=${top}`,
@@ -691,16 +693,30 @@ const takeRestoredInput = async (paneId, wait = 2000, read = () => paneInput(pan
 };
 
 /**
- * Types into a session from the cockpit: { key } presses one of SEND_KEYS ('submit' presses a multi-select's Next or Submit); { answer: { key, text } }
+ * Clears text left in a session's input box (typed in herdr, say), which would otherwise hold back every message sent from the
+ * cockpit; returns what it cleared ('' when there was nothing). Backspaces from the end, with spares for wrapped lines.
+ */
+const clearInput = (read, keys) => {
+  const typed = read();
+  if (typed) keys(...Array(typed.length + 20).fill('backspace'));
+  return typed;
+};
+
+/**
+ * Types into a session from the cockpit: { clear: true } empties its input box (clearInput); { key } presses one of SEND_KEYS ('submit' presses a multi-select's Next or Submit); { answer: { key, text } }
  * types text into a question's free-text option and picks it; { text } sends a message
  * with Enter. Newlines become spaces, since one would send the message early. A message is refused
  * while the session waits on a prompt or its input box holds text typed in herdr, so the two never mix.
  */
 const sendToSession = async (req, res) => {
-  const { paneId, text, key, answer, context } = JSON.parse(await readBody(req, MAX_MESSAGE * 2));
+  const { paneId, text, key, answer, context, clear } = JSON.parse(await readBody(req, MAX_MESSAGE * 2));
   const pane = appPane(paneId);
   if (!pane) {
     sendJson(res, 404, { error: `no Claude session of the app's in pane ${paneId}` });
+    return;
+  }
+  if (clear === true) {
+    sendJson(res, 200, { cleared: clearInput(() => paneInput(paneScreen(paneId)), (...keys) => execFileSync('herdr', ['pane', 'send-keys', paneId, ...keys], { stdio: 'ignore', timeout: 5000 })) });
     return;
   }
   if (key !== undefined) {
@@ -1753,4 +1769,4 @@ if (require.main === module) {
   }, PUSH_RETRY_MS);
 }
 
-module.exports = { serveVadFile, appAgents, appInfo, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, shellQuote, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats };
+module.exports = { serveVadFile, appAgents, appInfo, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, shellQuote, streamJob, suspectTranscript, clearInput, takeRestoredInput, tabState, updateListener, wavStats };
