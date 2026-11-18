@@ -11,7 +11,7 @@ const path = require('node:path');
 // The server keeps its logs under STUDIO_HOME, read once at load: point it at a throwaway folder before loading it.
 process.env.STUDIO_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-server-test-'));
 
-const { clearInput, serveVadFile, appAgents, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats } = require('./studio-server');
+const { typeInto, clearInput, serveVadFile, appAgents, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, streamJob, suspectTranscript, takeRestoredInput, tabState, updateListener, wavStats } = require('./studio-server');
 
 test('isLocalHost: localhost and 127.0.0.1 only, so a rebound DNS name is refused', () => {
   assert.ok(isLocalHost('localhost'));
@@ -84,6 +84,16 @@ test('answerFreeText: arrows to the free-text option, clears it, types, and pres
   const gone = laggyQuestion('1', '');
   assert.match(await answerFreeText('2', 'x', gone.read, gone.keys, gone.type, 2000), /no such text option/);
   assert.match(await answerFreeText('4', 'x', () => 'no question here', gone.keys, gone.type, 2000), /no such text option/);
+});
+
+test('typeInto: types, then logs what is left in the input box with what was typed (not the message itself); nothing left, nothing logged', async () => {
+  const logged = [];
+  const typed = [];
+  const opts = (left) => ({ read: () => left, log: (record) => logged.push(record), wait: 10, run: () => typed.push('run') });
+  assert.equal(await typeInto('w1:p1', '/effort medium', '/effort medium', opts('d')), 'd');
+  assert.equal(await typeInto('w1:p1', 'a private message', 'message', opts('')), '');
+  assert.equal(typed.length, 2);
+  assert.deepEqual(logged, [{ event: 'left-in-input', pane: 'w1:p1', after: '/effort medium', length: 14, left: 'd' }]);
 });
 
 test('clearInput: backspaces out text left in the input box, with spares, and says what it was; nothing to clear, no keys', () => {

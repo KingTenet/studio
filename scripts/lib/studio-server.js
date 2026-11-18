@@ -693,6 +693,28 @@ const takeRestoredInput = async (paneId, wait = 2000, read = () => paneInput(pan
 };
 
 /**
+ * Types into a session's pane with `herdr pane run` (the text, then Enter), and 1.5 s later looks at its input box: anything
+ * still there is logged (sessions.jsonl, 'left-in-input') with what the studio had typed, to find where stray text in the box
+ * comes from. `what` names it: 'message', '/effort high', '/clear'. The message itself isn't logged, only its length.
+ */
+const LEFT_CHECK_MS = 1500;
+const typeInto = (paneId, text, what, { read = () => paneInput(paneScreen(paneId)), log = logSession, wait = LEFT_CHECK_MS, run = () => execFileSync('herdr', ['pane', 'run', paneId, text], { stdio: 'ignore', timeout: 5000 }) } = {}) => {
+  run();
+  return new Promise((resolve) =>
+    setTimeout(() => {
+      let left = '';
+      try {
+        left = read();
+      } catch {
+        // the pane went away
+      }
+      if (left) log({ event: 'left-in-input', pane: paneId, after: what, length: text.length, left: left.slice(0, 80) });
+      resolve(left);
+    }, wait).unref?.()
+  );
+};
+
+/**
  * Clears text left in a session's input box (typed in herdr, say), which would otherwise hold back every message sent from the
  * cockpit; returns what it cleared ('' when there was nothing). Backspaces from the end, with spares for wrapped lines.
  */
@@ -716,7 +738,9 @@ const sendToSession = async (req, res) => {
     return;
   }
   if (clear === true) {
-    sendJson(res, 200, { cleared: clearInput(() => paneInput(paneScreen(paneId)), (...keys) => execFileSync('herdr', ['pane', 'send-keys', paneId, ...keys], { stdio: 'ignore', timeout: 5000 })) });
+    const cleared = clearInput(() => paneInput(paneScreen(paneId)), (...keys) => execFileSync('herdr', ['pane', 'send-keys', paneId, ...keys], { stdio: 'ignore', timeout: 5000 }));
+    logSession({ event: 'cleared-input', pane: paneId, left: cleared.slice(0, 80) });
+    sendJson(res, 200, { cleared });
     return;
   }
   if (key !== undefined) {
@@ -775,13 +799,14 @@ const sendToSession = async (req, res) => {
   }
   const pending = paneInput(paneScreen(paneId));
   if (pending) {
-    sendJson(res, 409, { error: 'The herdr pane has text typed but not sent. Send or clear it there first.', pending });
+    logSession({ event: 'blocked-by-input', pane: paneId, left: pending.slice(0, 80) });
+    sendJson(res, 409, { error: "Something typed in Claude's window wasn't sent. Clear it to send yours.", pending });
     return;
   }
   if (context) notePageContext(paneId, context);
   // The effort for the chat's mode first, so this message runs at it; time for /effort to run before the message is typed.
   if (syncEffort(appInfo().dir)) await new Promise((resolve) => setTimeout(resolve, 700));
-  execFileSync('herdr', ['pane', 'run', paneId, message], { stdio: 'ignore', timeout: 5000 });
+  void typeInto(paneId, message, 'message');
   res.writeHead(204).end();
 };
 
@@ -1272,7 +1297,7 @@ const syncEffort = (appDir) => {
     const level = EFFORT[readMode(appDir)];
     const key = `${chat.paneId} ${chat.sessionId}`;
     if (effortTyped.get(key) === level || paneInput(paneScreen(chat.paneId))) return false;
-    execFileSync('herdr', ['pane', 'run', chat.paneId, `/effort ${level}`], { stdio: 'ignore', timeout: 5000 });
+    void typeInto(chat.paneId, `/effort ${level}`, `/effort ${level}`);
     logSession({ event: 'typed', pane: chat.paneId, session: chat.sessionId, text: `/effort ${level}` });
     effortTyped.set(key, level);
     return true;
@@ -1306,7 +1331,7 @@ const setModeNow = async (req, res) => {
  */
 const clearChat = async (chat) => {
   if (!chat) return;
-  execFileSync('herdr', ['pane', 'run', chat.paneId, '/clear'], { stdio: 'ignore', timeout: 5000 });
+  void typeInto(chat.paneId, '/clear', '/clear');
   logSession({ event: 'typed', pane: chat.paneId, session: chat.sessionId ?? null, text: '/clear' });
   // Time for /clear to run, so a message sent next goes to the cleared conversation and not into the input box beside it.
   await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -1769,4 +1794,4 @@ if (require.main === module) {
   }, PUSH_RETRY_MS);
 }
 
-module.exports = { serveVadFile, appAgents, appInfo, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, shellQuote, streamJob, suspectTranscript, clearInput, takeRestoredInput, tabState, updateListener, wavStats };
+module.exports = { serveVadFile, appAgents, appInfo, devLogTail, looksCrashed, artifactFile, artifactShotArgs, actionRecord, checkInListener, cleanTranscript, answerFreeText, inApp, isLocalHost, jobScript, keepDrawing, keepUpload, mayRunJobs, mergeUiPrefs, notePageContext, pausedOffers, recordingDir, servedArtifact, shellQuote, streamJob, suspectTranscript, clearInput, takeRestoredInput, typeInto, tabState, updateListener, wavStats };
