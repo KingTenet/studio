@@ -40,6 +40,7 @@
 #        studio switch <app>
 #        studio run [<app>]
 #        studio logs              # puts the studio's logs in one zip on the Desktop, to send to whoever helps
+#        studio restart           # studio down (when it's running), then studio up: the newest version, started afresh
 #        studio down              # stops the studio (Claude, the cockpit, the app's dev server, dictation): `studio up`
 #                                 # then starts it all afresh, on the newest version, and Claude carries on its conversation
 #
@@ -75,7 +76,7 @@ WHISPER_MODEL="${STUDIO_WHISPER_MODEL:-$HOME/.whisper/ggml-small.en.bin}"
 WORKSPACE="${STUDIO_WORKSPACE:-studio}"
 CONFIG="$STUDIO_HOME/config.json"
 
-usage() { echo "usage: studio up [--dry-run]   or   studio new <app> [--collaborator <github user>]   or   studio switch <app>   or   studio run [<app>]   or   studio logs   or   studio down" >&2; exit 2; }
+usage() { echo "usage: studio up [--dry-run]   or   studio new <app> [--collaborator <github user>]   or   studio switch <app>   or   studio run [<app>]   or   studio logs   or   studio down   or   studio restart" >&2; exit 2; }
 DRY_RUN=false
 case "${1:-} ${2:-}" in
   "up ") ;;
@@ -85,6 +86,7 @@ case "${1:-} ${2:-}" in
   run\ *) [ $# -le 2 ] || usage ;;
   "logs ") ;;
   "down ") ;;
+  "restart ") ;;
   *) usage ;;
 esac
 
@@ -205,6 +207,13 @@ if [ "$1" = new ]; then
   exit 0
 fi
 
+# --- studio restart -------------------------------------------------------------------------------
+
+if [ "$1" = restart ]; then
+  STUDIO_RESTARTING=1 "$0" down || exit $?
+  exec "$0" up
+fi
+
 # --- studio down ----------------------------------------------------------------------------------
 
 if [ "$1" = down ]; then
@@ -234,7 +243,9 @@ if [ "$1" = down ]; then
     [ "$busy" = false ] && break
     sleep 0.25
   done
-  echo "The studio has stopped. To start it again (on the newest version): studio up"
+  if [ -n "${STUDIO_RESTARTING:-}" ]; then echo "The studio has stopped; starting it again…"
+  else echo "The studio has stopped. To start it again (on the newest version): studio up"
+  fi
   exit 0
 fi
 

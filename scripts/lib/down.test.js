@@ -38,7 +38,7 @@ esac
   const env = { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`, STUDIO_HOME: path.join(home, '.studio'), STUDIO_PORT: '45991', STUDIO_WHISPER_PORT: '45992', STUDIO_WORKSPACE: 'studio' };
   delete env.STUDIO_LOGGING;
   return {
-    run: () => spawnSync(STUDIO, ['down'], { encoding: 'utf8', env }),
+    run: (command = 'down') => spawnSync(STUDIO, [command], { encoding: 'utf8', env }),
     calls: () => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8') : ''),
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
   };
@@ -77,6 +77,18 @@ test("studio down when the studio isn't running says so", () => {
     assert.equal(result.status, 0);
     assert.match(result.stdout, /The studio isn't running/);
     assert.doesNotMatch(t.calls(), /workspace close/);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('studio restart stops nothing while Claude is working, and starts nothing either', () => {
+  const t = setup({ claudeStatus: 'working' });
+  try {
+    const result = t.run('restart');
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /still working/);
+    assert.doesNotMatch(t.calls(), /workspace close|workspace create|tab create/);
   } finally {
     t.cleanup();
   }
